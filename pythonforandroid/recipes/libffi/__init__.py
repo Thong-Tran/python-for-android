@@ -78,8 +78,8 @@ class LibffiRecipe(Recipe):
             with current_directory(self.get_host(arch)):
                 shprint(cc, *cflags, _env=env)
 
-            shprint(sh.cp, '-t', self.ctx.get_libs_dir(arch.arch),
-                    join(self.get_host(arch), '.libs', 'libffi.so'))
+            shprint(sh.cp, join(self.get_host(arch), '.libs', 'libffi.so'),
+                    self.ctx.get_libs_dir(arch.arch))
 
     def get_include_dirs(self, arch):
         return [join(self.get_build_dir(arch.arch), self.get_host(arch),

@@ -11,9 +11,11 @@ class PymunkRecipe(CompiledComponentsPythonRecipe):
     def get_recipe_env(self, arch):
         env = super(PymunkRecipe, self).get_recipe_env(arch)
         env['PYTHON_ROOT'] = self.ctx.get_python_install_dir()
-        arch_noeabi = arch.arch.replace('eabi', '')
+        arch_noeabi = arch.arch.split('-')[0].replace('eabi', '')
+        python_version = self.ctx.python_recipe.version
+        print('Use python', python_version)
         env['LDFLAGS'] += " -shared -llog"
-        env['LDFLAGS'] += " -landroid -lpython2.7"
+        env['LDFLAGS'] += " -landroid "#-lpython{}".format(python_version)
         env['LDFLAGS'] += " --sysroot={ctx.ndk_dir}/platforms/android-{ctx.android_api}/arch-{arch_noeabi}".format(
             ctx=self.ctx, arch_noeabi=arch_noeabi)
         return env
