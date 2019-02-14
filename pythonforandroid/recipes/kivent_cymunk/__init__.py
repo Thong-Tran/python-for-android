@@ -7,13 +7,16 @@ class KiventCymunkRecipe(CythonRecipe):
 
     depends = ['kivent_core', 'cymunk']
 
+    patches = ['fix-include-cymunk.patch']
+
     subbuilddir = False
 
     def get_recipe_env(self, arch, with_flags_in_cc=True):
         env = super(KiventCymunkRecipe, self).get_recipe_env(
             arch, with_flags_in_cc=with_flags_in_cc)
-        cymunk = self.get_recipe('cymunk', self.ctx).get_build_dir(arch.arch)
+        cymunk = join(self.get_recipe('cymunk', self.ctx).get_build_dir(arch.arch), 'cymunk')
         env['PYTHONPATH'] = join(cymunk, 'cymunk', 'python')
+        env['PYTHONPATH'] += ':' + self.ctx.get_python_install_dir()
         kivy = self.get_recipe('kivy', self.ctx).get_build_dir(arch.arch)
         kivent = self.get_recipe('kivent_core',
                                  self.ctx).get_build_dir(arch.arch, sub=True)

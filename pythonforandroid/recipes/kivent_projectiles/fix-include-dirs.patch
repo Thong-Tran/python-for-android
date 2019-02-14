@@ -1,0 +1,22 @@
+diff --git a/setup.py b/setup.py
+index 99287b7..8208455 100644
+--- a/setup.py
++++ b/setup.py
+@@ -84,7 +84,7 @@ elif platform == 'darwin':
+     libraries = []
+
+ do_clear_existing = True
+-import cymunk
++# import cymunk
+
+ projectiles_modules = {
+     'kivent_projectiles.projectiles': ['kivent_projectiles/projectiles.pyx'],
+@@ -108,7 +108,7 @@ check_for_removal = [
+ ]
+
+
+-def build_ext(ext_name, files, include_dirs=cymunk.get_includes()):
++def build_ext(ext_name, files, include_dirs=environ['CYTHONPATH'].split(':')):
+     return Extension(ext_name, files, global_include_dirs + include_dirs,
+                      extra_compile_args=[cstdarg, '-ffast-math', ] + extra_compile_args,
+                      libraries=libraries, extra_link_args=extra_link_args,

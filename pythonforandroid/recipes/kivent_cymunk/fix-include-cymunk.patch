@@ -1,0 +1,26 @@
+diff --git a/setup.py b/setup.py
+index a1efd46..893dffd 100644
+--- a/setup.py
++++ b/setup.py
+@@ -104,15 +104,15 @@ check_for_removal = [
+
+ ]
+
+-loader = pkgutil.get_loader("cymunk")
+-cymunk_dirname = loader.path if hasattr(loader, 'path') else loader.filename
++# loader = pkgutil.get_loader("cymunk")
++# cymunk_dirname = loader.path if hasattr(loader, 'path') else loader.filename
+
+-# pkgutil gives different results for py3
+-if '__init__.py' in cymunk_dirname:
+-    cymunk_dirname = dirname(cymunk_dirname)
++# # pkgutil gives different results for py3
++# if '__init__.py' in cymunk_dirname:
++#     cymunk_dirname = dirname(cymunk_dirname)
+
+
+-def build_ext(ext_name, files, include_dirs=[cymunk_dirname]):
++def build_ext(ext_name, files, include_dirs=environ['CYTHONPATH'].split(':')):
+     return Extension(ext_name, files, global_include_dirs + include_dirs,
+                      extra_compile_args=[cstdarg, '-ffast-math', ] + extra_compile_args,
+                      libraries=libraries, extra_link_args=extra_link_args,

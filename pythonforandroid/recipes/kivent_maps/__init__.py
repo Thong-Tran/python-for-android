@@ -2,15 +2,15 @@ from pythonforandroid.recipe import CythonRecipe
 from os.path import join
 
 
-class KiventParticlesRecipe(CythonRecipe):
-    name = 'kivent_particles'
+class KiventMapsRecipe(CythonRecipe):
+    name = 'kivent_maps'
 
-    depends = ['kivent_core']
+    depends = ['kivent_core', 'tmx']
 
     subbuilddir = False
 
     def get_recipe_env(self, arch, with_flags_in_cc=True):
-        env = super(KiventParticlesRecipe, self).get_recipe_env(
+        env = super(KiventMapsRecipe, self).get_recipe_env(
             arch, with_flags_in_cc=with_flags_in_cc)
         kivy = self.get_recipe('kivy', self.ctx).get_build_dir(arch.arch)
         kivent = self.get_recipe('kivent_core',
@@ -25,7 +25,7 @@ class KiventParticlesRecipe(CythonRecipe):
 
     def get_build_dir(self, arch):
         builddir = self.get_recipe('kivent_core', self.ctx).get_build_dir(arch)
-        return join(builddir, 'modules', 'particles')
+        return join(builddir, 'modules', 'maps')
 
 
-recipe = KiventParticlesRecipe()
+recipe = KiventMapsRecipe()

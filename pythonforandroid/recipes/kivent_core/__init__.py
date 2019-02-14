@@ -16,6 +16,7 @@ class KiventCoreRecipe(CythonRecipe):
             arch, with_flags_in_cc=with_flags_in_cc)
         env['CYTHONPATH'] = self.get_recipe(
             'kivy', self.ctx).get_build_dir(arch.arch)
+        env['PYTHONPATH'] += ':' + self.ctx.get_python_install_dir()
         return env
 
     def get_build_dir(self, arch, sub=False):
