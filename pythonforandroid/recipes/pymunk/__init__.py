@@ -11,13 +11,13 @@ class PymunkRecipe(CompiledComponentsPythonRecipe):
     def get_recipe_env(self, arch):
         env = super(PymunkRecipe, self).get_recipe_env(arch)
         env['PYTHON_ROOT'] = self.ctx.get_python_install_dir()
-        arch_noeabi = arch.arch.split('-')[0].replace('eabi', '')
-        python_version = self.ctx.python_recipe.version
-        print('Use python', python_version)
-        env['LDFLAGS'] += " -shared -llog"
-        env['LDFLAGS'] += " -landroid "#-lpython{}".format(python_version)
-        env['LDFLAGS'] += " --sysroot={ctx.ndk_dir}/platforms/android-{ctx.android_api}/arch-{arch_noeabi}".format(
-            ctx=self.ctx, arch_noeabi=arch_noeabi)
+        # arch_noeabi = arch.arch.split('-')[0].replace('eabi', '')
+        # env['LDFLAGS'] += " --sysroot={ctx.ndk_dir}/platforms/android-{ctx.android_api}/arch-{arch_noeabi}".format(
+        #     ctx=self.ctx, arch_noeabi=arch_noeabi)
+        env['LDFLAGS'] += " -shared -llog -lc"
+        env['LDFLAGS'] += ' -L{}'.format(join(self.ctx.ndk_platform, 'usr', 'lib'))
+        env['LDFLAGS'] += " --sysroot={}".format(self.ctx.ndk_platform)
+        env['LIBS'] = env.get('LIBS', '') + ' -landroid'
         return env
 
 
