@@ -1,0 +1,15 @@
+diff --git a/kivy/core/camera/camera_android.py b/kivy/core/camera/camera_android.py
+index c17c44d6d..48b65a52b 100644
+--- a/kivy/core/camera/camera_android.py
++++ b/kivy/core/camera/camera_android.py
+@@ -50,8 +50,9 @@ class CameraAndroid(CameraBase):
+         params = self._android_camera.getParameters()
+         width, height = self._resolution
+         params.setPreviewSize(width, height)
++        params.setRotation(180)
+         self._android_camera.setParameters(params)
+-        # self._android_camera.setDisplayOrientation()
++        self._android_camera.setDisplayOrientation(90)
+         self.fps = 30.
+
+         pf = params.getPreviewFormat()
