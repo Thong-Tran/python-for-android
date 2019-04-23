@@ -6,7 +6,7 @@ from os.path import join
 class FFPyPlayerRecipe(CythonRecipe):
     version = 'v4.1.0'
     url = 'https://github.com/matham/ffpyplayer/archive/{version}.zip'
-    depends = [('python2', 'python3crystax'), 'sdl2', 'ffmpeg']
+    depends = [('python2', 'python3'), 'sdl2', 'ffmpeg']
     opt_depends = ['openssl', 'ffpyplayer_codecs']
     patches = ['fix-cython.patch']
 

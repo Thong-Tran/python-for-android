@@ -3,11 +3,10 @@ from pythonforandroid.recipe import PythonRecipe
 
 class OmemoRecipe(PythonRecipe):
     name = 'omemo'
-    version = '0.10.3'
+    version = '0.10.4'
     url = 'https://pypi.python.org/packages/source/O/OMEMO/OMEMO-{version}.tar.gz'
     site_packages_name = 'omemo'
     depends = [
-        ('python2', 'python3crystax'),
         'setuptools',
         'x3dh',
         'cryptography',

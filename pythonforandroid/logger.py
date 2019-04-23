@@ -44,9 +44,9 @@ class LevelDifferentiatingFormatter(logging.Formatter):
 
 
 logger = logging.getLogger('p4a')
-if not hasattr(logger, 'touched'):  # Necessary as importlib reloads
-                                    # this, which would add a second
-                                    # handler and reset the level
+# Necessary as importlib reloads this,
+# which would add a second handler and reset the level
+if not hasattr(logger, 'touched'):
     logger.setLevel(logging.INFO)
     logger.touched = True
     ch = logging.StreamHandler(stderr)
@@ -188,11 +188,12 @@ def shprint(command, *args, **kwargs):
                         '\t', ' ').replace(
                             '\b', ' ').rstrip()
                 if msg:
-                    stdout.write(u'{}\r{}{:<{width}}'.format(
-                        Err_Style.RESET_ALL, msg_hdr,
-                        shorten_string(msg, msg_width), width=msg_width))
-                    stdout.flush()
-                    need_closing_newline = True
+                    if "CI" not in os.environ:
+                        stdout.write(u'{}\r{}{:<{width}}'.format(
+                            Err_Style.RESET_ALL, msg_hdr,
+                            shorten_string(msg, msg_width), width=msg_width))
+                        stdout.flush()
+                        need_closing_newline = True
             else:
                 logger.debug(''.join(['\t', line.rstrip()]))
         if need_closing_newline:

@@ -7,8 +7,10 @@ This module defines the entry point for command line and programmatic use.
 """
 
 from __future__ import print_function
+from os import environ
 from pythonforandroid import __version__
-from pythonforandroid.build import DEFAULT_NDK_API, DEFAULT_ANDROID_API
+from pythonforandroid.recommendations import (
+    RECOMMENDED_NDK_API, RECOMMENDED_TARGET_API)
 from pythonforandroid.util import BuildInterruptingException, handle_build_exception
 
 
@@ -139,7 +141,6 @@ def require_prebuilt_dist(func):
         ctx.prepare_build_environment(user_sdk_dir=self.sdk_dir,
                                       user_ndk_dir=self.ndk_dir,
                                       user_android_api=self.android_api,
-                                      user_ndk_ver=self.ndk_version,
                                       user_ndk_api=self.ndk_api)
         dist = self._dist
         if dist.needs_build:
@@ -170,16 +171,24 @@ def build_dist_from_args(ctx, dist, args):
     """Parses out any bootstrap related arguments, and uses them to build
     a dist."""
     bs = Bootstrap.get_bootstrap(args.bootstrap, ctx)
-    build_order, python_modules, bs \
-        = get_recipe_order_and_bootstrap(ctx, dist.recipes, bs)
+    blacklist = getattr(args, "blacklist_requirements", "").split(",")
+    if len(blacklist) == 1 and blacklist[0] == "":
+        blacklist = []
+    build_order, python_modules, bs = (
+        get_recipe_order_and_bootstrap(
+            ctx, dist.recipes, bs,
+            blacklist=blacklist
+        ))
     ctx.recipe_build_order = build_order
     ctx.python_modules = python_modules
 
     info('The selected bootstrap is {}'.format(bs.name))
     info_main('# Creating dist with {} bootstrap'.format(bs.name))
     bs.distribution = dist
-    info_notify('Dist will have name {} and recipes ({})'.format(
+    info_notify('Dist will have name {} and requirements ({})'.format(
         dist.name, ', '.join(dist.recipes)))
+    info('Dist contains the following requirements as recipes: {}'.format(
+        ctx.recipe_build_order))
     info('Dist will also contain modules ({}) installed from pip'.format(
         ', '.join(ctx.python_modules)))
 
@@ -220,6 +229,7 @@ class ToolchainCL(object):
     def __init__(self):
 
         argv = sys.argv
+        self.warn_on_carriage_return_args(argv)
         # Buildozer used to pass these arguments in a now-invalid order
         # If that happens, apply this fix
         # This fix will be removed once a fixed buildozer is released
@@ -258,16 +268,16 @@ class ToolchainCL(object):
             default=0,
             type=int,
             help=('The Android API level to build against defaults to {} if '
-                  'not specified.').format(DEFAULT_ANDROID_API))
+                  'not specified.').format(RECOMMENDED_TARGET_API))
         generic_parser.add_argument(
-            '--ndk-version', '--ndk_version', dest='ndk_version', default='',
-            help=('The version of the Android NDK. This is optional: '
-                  'we try to work it out automatically from the ndk_dir.'))
+            '--ndk-version', '--ndk_version', dest='ndk_version', default=None,
+            help=('DEPRECATED: the NDK version is now found automatically or '
+                  'not at all.'))
         generic_parser.add_argument(
             '--ndk-api', type=int, default=None,
             help=('The Android API level to compile against. This should be your '
                   '*minimal supported* API, not normally the same as your --android-api. '
-                  'Defaults to min(ANDROID_API, {}) if not specified.').format(DEFAULT_NDK_API))
+                  'Defaults to min(ANDROID_API, {}) if not specified.').format(RECOMMENDED_NDK_API))
         generic_parser.add_argument(
             '--symlink-java-src', '--symlink_java_src',
             action='store_true',
@@ -298,6 +308,13 @@ class ToolchainCL(object):
             '--requirements',
             help=('Dependencies of your app, should be recipe names or '
                   'Python modules'),
+            default='')
+
+        generic_parser.add_argument(
+            '--blacklist-requirements',
+            help=('Blacklist an internal recipe from use. Allows '
+                  'disabling Python 3 core modules to save size'),
+            dest="blacklist_requirements",
             default='')
 
         generic_parser.add_argument(
@@ -360,6 +377,11 @@ class ToolchainCL(object):
                 kwargs.pop('aliases')
             return subparsers.add_parser(*args, **kwargs)
 
+        add_parser(
+            subparsers,
+            'recommendations',
+            parents=[generic_parser],
+            help='List recommended p4a dependencies')
         parser_recipes = add_parser(
             subparsers,
             'recipes',
@@ -442,7 +464,6 @@ class ToolchainCL(object):
             help='Symlink the dist instead of copying')
 
         parser_apk = add_parser(
-
             subparsers,
             'apk', help='Build an APK',
             parents=[generic_parser])
@@ -464,20 +485,20 @@ class ToolchainCL(object):
             '--signkeypw', dest='signkeypw', action='store', default=None,
             help='Password for key alias')
 
-        parser_create = add_parser(
+        add_parser(
             subparsers,
             'create', help='Compile a set of requirements into a dist',
             parents=[generic_parser])
-        parser_archs = add_parser(
+        add_parser(
             subparsers,
             'archs', help='List the available target architectures',
             parents=[generic_parser])
-        parser_distributions = add_parser(
+        add_parser(
             subparsers,
             'distributions', aliases=['dists'],
             help='List the currently available (compiled) dists',
             parents=[generic_parser])
-        parser_delete_dist = add_parser(
+        add_parser(
             subparsers,
             'delete_dist', aliases=['delete-dist'], help='Delete a compiled dist',
             parents=[generic_parser])
@@ -490,15 +511,15 @@ class ToolchainCL(object):
         parser_sdk_tools.add_argument(
             'tool', help='The binary tool name to run')
 
-        parser_adb = add_parser(
+        add_parser(
             subparsers,
             'adb', help='Run adb from the given SDK',
             parents=[generic_parser])
-        parser_logcat = add_parser(
+        add_parser(
             subparsers,
             'logcat', help='Run logcat from the given SDK',
             parents=[generic_parser])
-        parser_build_status = add_parser(
+        add_parser(
             subparsers,
             'build_status', aliases=['build-status'],
             help='Print some debug information about current built components',
@@ -521,9 +542,11 @@ class ToolchainCL(object):
         if args.debug:
             logger.setLevel(logging.DEBUG)
 
-        # strip version from requirements, and put them in environ
+        # Process requirements and put version in environ
         if hasattr(args, 'requirements'):
             requirements = []
+
+            # Parse --requirements argument list:
             for requirement in split_argument_list(args.requirements):
                 if "==" in requirement:
                     requirement, version = requirement.split(u"==", 1)
@@ -533,13 +556,14 @@ class ToolchainCL(object):
                 requirements.append(requirement)
             args.requirements = u",".join(requirements)
 
+        self.warn_on_deprecated_args(args)
+
         self.ctx = Context()
         self.storage_dir = args.storage_dir
         self.ctx.setup_dirs(self.storage_dir)
         self.sdk_dir = args.sdk_dir
         self.ndk_dir = args.ndk_dir
         self.android_api = args.android_api
-        self.ndk_version = args.ndk_version
         self.ndk_api = args.ndk_api
         self.ctx.symlink_java_src = args.symlink_java_src
         self.ctx.java_build_tool = args.java_build_tool
@@ -551,6 +575,26 @@ class ToolchainCL(object):
 
         # Each subparser corresponds to a method
         getattr(self, args.subparser_name.replace('-', '_'))(args)
+
+    @staticmethod
+    def warn_on_carriage_return_args(args):
+        for check_arg in args:
+            if '\r' in check_arg:
+                warning("Argument '{}' contains a carriage return (\\r).".format(str(check_arg.replace('\r', ''))))
+                warning("Invoking this program via scripts which use CRLF instead of LF line endings will have undefined behaviour.")
+
+    def warn_on_deprecated_args(self, args):
+        """
+        Print warning messages for any deprecated arguments that were passed.
+        """
+
+        # NDK version is now determined automatically
+        if args.ndk_version is not None:
+            warning('--ndk-version is deprecated and no longer necessary, '
+                    'the value you passed is ignored')
+        if 'ANDROIDNDKVER' in environ:
+            warning('$ANDROIDNDKVER is deprecated and no longer necessary, '
+                    'the value you set is ignored')
 
     def hook(self, name):
         if not self.args.hook:
@@ -594,7 +638,7 @@ class ToolchainCL(object):
             for name in sorted(Recipe.list_recipes(ctx)):
                 try:
                     recipe = Recipe.get_recipe(name, ctx)
-                except IOError:
+                except (IOError, ValueError):
                     warning('Recipe "{}" could not be loaded'.format(name))
                 except SyntaxError:
                     import traceback
@@ -772,7 +816,7 @@ class ToolchainCL(object):
                 if len(argx) > 1:
                     unknown_args[i] = '='.join(
                         (argx[0], realpath(expanduser(argx[1]))))
-                else:
+                elif i + 1 < len(unknown_args):
                     unknown_args[i+1] = realpath(expanduser(unknown_args[i+1]))
 
         env = os.environ.copy()
@@ -959,7 +1003,6 @@ class ToolchainCL(object):
         ctx.prepare_build_environment(user_sdk_dir=self.sdk_dir,
                                       user_ndk_dir=self.ndk_dir,
                                       user_android_api=self.android_api,
-                                      user_ndk_ver=self.ndk_version,
                                       user_ndk_api=self.ndk_api)
         android = sh.Command(join(ctx.sdk_dir, 'tools', args.tool))
         output = android(
@@ -987,7 +1030,6 @@ class ToolchainCL(object):
         ctx.prepare_build_environment(user_sdk_dir=self.sdk_dir,
                                       user_ndk_dir=self.ndk_dir,
                                       user_android_api=self.android_api,
-                                      user_ndk_ver=self.ndk_version,
                                       user_ndk_api=self.ndk_api)
         if platform in ('win32', 'cygwin'):
             adb = sh.Command(join(ctx.sdk_dir, 'platform-tools', 'adb.exe'))

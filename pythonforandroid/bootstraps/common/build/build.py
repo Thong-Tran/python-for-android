@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from zipfile import ZipFile
 
@@ -22,16 +23,28 @@ from fnmatch import fnmatch
 import jinja2
 
 
-def get_bootstrap_name():
+def get_dist_info_for(key):
     try:
         with open(join(dirname(__file__), 'dist_info.json'), 'r') as fileh:
             info = json.load(fileh)
-        bootstrap = str(info["bootstrap"])
+        value = str(info[key])
     except (OSError, KeyError) as e:
-        print("BUILD FAILURE: Couldn't extract bootstrap name " +
+        print("BUILD FAILURE: Couldn't extract the key `" + key + "` " +
               "from dist_info.json: " + str(e))
         sys.exit(1)
-    return bootstrap
+    return value
+
+
+def get_hostpython():
+    return get_dist_info_for('hostpython')
+
+
+def get_python_version():
+    return get_dist_info_for('python_version')
+
+
+def get_bootstrap_name():
+    return get_dist_info_for('bootstrap')
 
 
 if os.name == 'nt':
@@ -43,10 +56,9 @@ else:
 
 curdir = dirname(__file__)
 
-# Try to find a host version of Python that matches our ARM version.
-PYTHON = join(curdir, 'python-install', 'bin', 'python.host')
-if not exists(PYTHON):
-    print('Could not find hostpython, will not compile to .pyo (this is normal with python3)')
+PYTHON = get_hostpython()
+PYTHON_VERSION = get_python_version()
+if PYTHON is not None and not exists(PYTHON):
     PYTHON = None
 
 BLACKLIST_PATTERNS = [
@@ -56,21 +68,22 @@ BLACKLIST_PATTERNS = [
     '^*.bzr/*',
     '^*.svn/*',
 
-    # pyc/py
-    '*.pyc',
-    # '*.py',
-
     # temp files
     '~',
     '*.bak',
     '*.swp',
 ]
+# pyc/py
 if PYTHON is not None:
     BLACKLIST_PATTERNS.append('*.py')
+    if PYTHON_VERSION and int(PYTHON_VERSION[0]) == 2:
+        # we only blacklist `.pyc` for python2 because in python3 the compiled
+        # extension is `.pyc` (.pyo files not exists for python >= 3.6)
+        BLACKLIST_PATTERNS.append('*.pyc')
 
 WHITELIST_PATTERNS = []
-if get_bootstrap_name() == "sdl2":
-    WHITELIST_PATTERNS.append("pyconfig.h")
+if get_bootstrap_name() in ('sdl2', 'webview', 'service_only'):
+    WHITELIST_PATTERNS.append('pyconfig.h')
 
 python_files = []
 
@@ -151,7 +164,6 @@ def make_python_zip():
 
     if not exists('private'):
         print('No compiled python is present to zip, skipping.')
-        print('this should only be the case if you are using the CrystaX python')
         return
 
     global python_files
@@ -238,16 +250,23 @@ def compile_dir(dfn, optimize_python=True):
     Compile *.py in directory `dfn` to *.pyo
     '''
 
-    if get_bootstrap_name() != "sdl2":
-        # HISTORICALLY DISABLED for other than sdl2. NEEDS REVIEW! -JonasT
-        return
-    # -OO = strip docstrings
     if PYTHON is None:
         return
-    args = [PYTHON, '-m', 'compileall', '-f', dfn]
+
+    if int(PYTHON_VERSION[0]) >= 3:
+        args = [PYTHON, '-m', 'compileall', '-b', '-f', dfn]
+    else:
+        args = [PYTHON, '-m', 'compileall', '-f', dfn]
     if optimize_python:
+        # -OO = strip docstrings
         args.insert(1, '-OO')
-    subprocess.call(args)
+    return_code = subprocess.call(args)
+
+    if return_code != 0:
+        print('Error while running "{}"'.format(' '.join(args)))
+        print('This probably means one of your Python files has a syntax '
+              'error, see logs above')
+        exit(1)
 
 
 def make_package(args):
@@ -265,8 +284,6 @@ main.py that loads it.''')
             sys.exit(1)
 
     assets_dir = "src/main/assets"
-    if get_bootstrap_name() != "sdl2":
-        assets_dir = "assets"
 
     # Delete the old assets.
     try_unlink(join(assets_dir, 'public.mp3'))
@@ -277,8 +294,17 @@ main.py that loads it.''')
     # construct a python27.zip
     make_python_zip()
 
+    # Add extra environment variable file into tar-able directory:
+    env_vars_tarpath = tempfile.mkdtemp(prefix="p4a-extra-env-")
+    with open(os.path.join(env_vars_tarpath, "p4a_env_vars.txt"), "w") as f:
+        f.write("P4A_IS_WINDOWED=" + str(args.window) + "\n")
+        if hasattr(args, "orientation"):
+            f.write("P4A_ORIENTATION=" + str(args.orientation) + "\n")
+        f.write("P4A_NUMERIC_VERSION=" + str(args.numeric_version) + "\n")
+        f.write("P4A_MINSDK=" + str(args.min_sdk_version) + "\n")
+
     # Package up the private data (public not supported).
-    tar_dirs = []
+    tar_dirs = [env_vars_tarpath]
     if args.private:
         tar_dirs.append(args.private)
     for python_bundle_dir in ('private', 'crystax_python', '_python_bundle'):
@@ -291,17 +317,18 @@ main.py that loads it.''')
             join(assets_dir, 'private.mp3'), tar_dirs, args.ignore_path,
             optimize_python=args.optimize_python)
 
+    # Remove extra env vars tar-able directory:
+    shutil.rmtree(env_vars_tarpath)
+
     # Prepare some variables for templating process
     res_dir = "src/main/res"
-    if get_bootstrap_name() == "webview":
-        res_dir = "res"
     default_icon = 'templates/kivy-icon.png'
     default_presplash = 'templates/kivy-presplash.jpg'
+    shutil.copy(
+        args.icon or default_icon,
+        join(res_dir, 'drawable/icon.png')
+    )
     if get_bootstrap_name() != "service_only":
-        shutil.copy(
-            args.icon or default_icon,
-            join(res_dir, 'drawable/icon.png')
-        )
         shutil.copy(
             args.presplash or default_presplash,
             join(res_dir, 'drawable/presplash.jpg')
@@ -314,7 +341,7 @@ main.py that loads it.''')
             if not exists(jarname):
                 print('Requested jar does not exist: {}'.format(jarname))
                 sys.exit(-1)
-            shutil.copy(jarname, 'libs')
+            shutil.copy(jarname, 'src/main/libs')
             jars.append(basename(jarname))
 
     # If extra aar were requested, copy them into the libs directory
@@ -333,18 +360,27 @@ main.py that loads it.''')
 
     version_code = 0
     if not args.numeric_version:
+        # Set version code in format (arch-minsdk-app_version)
+        with open(join(dirname(__file__), 'dist_info.json'), 'r') as dist_info:
+            dist_data = json.load(dist_info)
+        arch = dist_data["archs"][0]
+        arch_dict = {"x86_64": "9", "arm64-v8a": "8", "armeabi-v7a": "7", "x86": "6"}
+        arch_code = arch_dict.get(arch, '1')
+        min_sdk = args.min_sdk_version
         for i in args.version.split('.'):
             version_code *= 100
             version_code += int(i)
-        args.numeric_version = str(version_code)
+        args.numeric_version = "{}{}{}".format(arch_code, min_sdk, version_code)
 
     if args.intent_filters:
         with open(args.intent_filters) as fd:
             args.intent_filters = fd.read()
 
-    if get_bootstrap_name() == "sdl2":
-        args.add_activity = args.add_activity or []
-        args.activity_launch_mode = args.activity_launch_mode or ''
+    if not args.add_activity:
+        args.add_activity = []
+
+    if not args.activity_launch_mode:
+        args.activity_launch_mode = ''
 
     if args.extra_source_dirs:
         esd = []
@@ -376,17 +412,11 @@ main.py that loads it.''')
         sticky = 'sticky' in options
 
         service_names.append(name)
-        service_target_path = ""
-        if get_bootstrap_name() != "sdl2":
-            service_target_path =\
-                'src/{}/Service{}.java'.format(args.package.replace(".", "/"),
-                                               name.capitalize())
-        else:
-            service_target_path =\
-                'src/main/java/{}/Service{}.java'.format(
-                    args.package.replace(".", "/"),
-                    name.capitalize()
-                )
+        service_target_path =\
+            'src/main/java/{}/Service{}.java'.format(
+                args.package.replace(".", "/"),
+                name.capitalize()
+            )
         render(
             'Service.tmpl.java',
             service_target_path,
@@ -403,7 +433,7 @@ main.py that loads it.''')
         target = fileh.read().strip()
     android_api = target.split('-')[1]
     try:
-        android_api_int_test = int(android_api)
+        int(android_api)
     except (ValueError, TypeError):
         raise ValueError(
             "failed to extract the Android API level from " +
@@ -426,8 +456,6 @@ main.py that loads it.''')
 
     # Render out android manifest:
     manifest_path = "src/main/AndroidManifest.xml"
-    if get_bootstrap_name() != "sdl2":
-        manifest_path = "AndroidManifest.xml"
     render_args = {
         "args": args,
         "service": service,
@@ -443,45 +471,39 @@ main.py that loads it.''')
 
     # Copy the AndroidManifest.xml to the dist root dir so that ant
     # can also use it
-    if get_bootstrap_name() == "sdl2":
-        if exists('AndroidManifest.xml'):
-            remove('AndroidManifest.xml')
-        shutil.copy(manifest_path, 'AndroidManifest.xml')
+    if exists('AndroidManifest.xml'):
+        remove('AndroidManifest.xml')
+    shutil.copy(manifest_path, 'AndroidManifest.xml')
 
     # gradle build templates
-    if get_bootstrap_name() != "webview":
-        # HISTORICALLY NOT SUPPORTED FOR WEBVIEW. Needs review? -JonasT
-        render(
-            'build.tmpl.gradle',
-            'build.gradle',
-            args=args,
-            aars=aars,
-            jars=jars,
-            android_api=android_api,
-            build_tools_version=build_tools_version)
+    render(
+        'build.tmpl.gradle',
+        'build.gradle',
+        args=args,
+        aars=aars,
+        jars=jars,
+        android_api=android_api,
+        build_tools_version=build_tools_version
+        )
 
     # ant build templates
-    if get_bootstrap_name() != "service_only":
-        # Historically, service_only doesn't support ant anymore.
-        # Maybe we should also drop this for the others? -JonasT
-        render(
-            'build.tmpl.xml',
-            'build.xml',
-            args=args,
-            versioned_name=versioned_name)
+    render(
+        'build.tmpl.xml',
+        'build.xml',
+        args=args,
+        versioned_name=versioned_name)
 
     # String resources:
-    if get_bootstrap_name() != "service_only":
-        render_args = {
-            "args": args,
-            "private_version": str(time.time())
-        }
-        if get_bootstrap_name() == "sdl2":
-            render_args["url_scheme"] = url_scheme
-        render(
-            'strings.tmpl.xml',
-            join(res_dir, 'values/strings.xml'),
-            **render_args)
+    render_args = {
+        "args": args,
+        "private_version": str(time.time())
+    }
+    if get_bootstrap_name() == "sdl2":
+        render_args["url_scheme"] = url_scheme
+    render(
+        'strings.tmpl.xml',
+        join(res_dir, 'values/strings.xml'),
+        **render_args)
 
     if exists(join("templates", "custom_rules.tmpl.xml")):
         render(
@@ -491,7 +513,7 @@ main.py that loads it.''')
 
     if get_bootstrap_name() == "webview":
         render('WebViewLoader.tmpl.java',
-               'src/org/kivy/android/WebViewLoader.java',
+               'src/main/java/org/kivy/android/WebViewLoader.java',
                args=args)
 
     if args.sign:
@@ -499,6 +521,31 @@ main.py that loads it.''')
     else:
         if exists('build.properties'):
             os.remove('build.properties')
+
+    # Apply java source patches if any are present:
+    if exists(join('src', 'patches')):
+        print("Applying Java source code patches...")
+        for patch_name in os.listdir(join('src', 'patches')):
+            patch_path = join('src', 'patches', patch_name)
+            print("Applying patch: " + str(patch_path))
+            try:
+                subprocess.check_output([
+                    # -N: insist this is FORWARd patch, don't reverse apply
+                    # -p1: strip first path component
+                    # -t: batch mode, don't ask questions
+                    "patch", "-N", "-p1", "-t", "-i", patch_path
+                ])
+            except subprocess.CalledProcessError as e:
+                if e.returncode == 1:
+                    # Return code 1 means it didn't apply, this will
+                    # usually mean it is already applied.
+                    print("Warning: failed to apply patch (" +
+                          "exit code 1), " +
+                          "assuming it is already applied: " +
+                          str(patch_path)
+                         )
+                else:
+                    raise e
 
 
 def parse_args(args=None):
@@ -526,7 +573,8 @@ tools directory of the Android SDK.
 
     # --private is required unless for sdl2, where there's also --launcher
     ap.add_argument('--private', dest='private',
-                    help='the dir of user files',
+                    help='the directory with the app source code files' +
+                         ' (containing your main.py entrypoint)',
                     required=(get_bootstrap_name() != "sdl2"))
     ap.add_argument('--package', dest='package',
                     help=('The name of the java package the project will be'
@@ -549,10 +597,18 @@ tools directory of the Android SDK.
         ap.add_argument('--launcher', dest='launcher', action='store_true',
                         help=('Provide this argument to build a multi-app '
                               'launcher, rather than a single app.'))
-    ap.add_argument('--permission', dest='permissions', action='append',
+    ap.add_argument('--permission', dest='permissions', action='append', default=[],
                     help='The permissions to give this app.', nargs='+')
-    ap.add_argument('--meta-data', dest='meta_data', action='append',
+    ap.add_argument('--meta-data', dest='meta_data', action='append', default=[],
                     help='Custom key=value to add in application metadata')
+    ap.add_argument('--uses-library', dest='android_used_libs', action='append', default=[],
+                    help='Used shared libraries included using <uses-library> tag in AndroidManifest.xml')
+    ap.add_argument('--icon', dest='icon',
+                    help=('A png file to use as the icon for '
+                          'the application.'))
+    ap.add_argument('--service', dest='services', action='append', default=[],
+                    help='Declare a new service entrypoint: '
+                         'NAME:PATH_TO_PY[:foreground]')
     if get_bootstrap_name() != "service_only":
         ap.add_argument('--presplash', dest='presplash',
                         help=('A jpeg file to use as a screen while the '
@@ -568,9 +624,6 @@ tools directory of the Android SDK.
         ap.add_argument('--window', dest='window', action='store_true',
                         default=False,
                         help='Indicate if the application will be windowed')
-        ap.add_argument('--icon', dest='icon',
-                        help=('A png file to use as the icon for '
-                              'the application.'))
         ap.add_argument('--orientation', dest='orientation',
                         default='portrait',
                         help=('The orientation that the game will '
@@ -584,10 +637,6 @@ tools directory of the Android SDK.
                               'https://developer.android.com/guide/'
                               'topics/manifest/'
                               'activity-element.html'))
-    else:
-        ap.add_argument('--service', dest='services', action='append',
-                        help='Declare a new service entrypoint: '
-                             'NAME:PATH_TO_PY[:foreground]')
     ap.add_argument('--wakelock', dest='wakelock', action='store_true',
                     help=('Indicate if the application needs the device '
                           'to stay on'))
@@ -628,9 +677,6 @@ tools directory of the Android SDK.
                           'directory'))
     ap.add_argument('--with-billing', dest='billing_pubkey',
                     help='If set, the billing service will be added (not implemented)')
-    ap.add_argument('--service', dest='services', action='append',
-                    help='Declare a new service entrypoint: '
-                         'NAME:PATH_TO_PY[:foreground]')
     ap.add_argument('--add-source', dest='extra_source_dirs', action='append',
                     help='Include additional source dirs in Java build')
     if get_bootstrap_name() == "webview":
@@ -647,7 +693,9 @@ tools directory of the Android SDK.
                           'the appropriate environment variables.'))
     ap.add_argument('--add-activity', dest='add_activity', action='append',
                     help='Add this Java class as an Activity to the manifest.')
-    ap.add_argument('--activity-launch-mode', dest='activity_launch_mode',
+    ap.add_argument('--activity-launch-mode',
+                    dest='activity_launch_mode',
+                    default='singleTask',
                     help='Set the launch mode of the main activity in the manifest.')
     ap.add_argument('--allow-backup', dest='allow_backup', default='true',
                     help="if set to 'false', then android won't backup the application.")
@@ -701,17 +749,8 @@ tools directory of the Android SDK.
               'deprecated and does nothing.')
         args.sdk_version = -1  # ensure it is not used
 
-    if args.permissions is None:
-        args.permissions = []
-    elif args.permissions:
-        if isinstance(args.permissions[0], list):
-            args.permissions = [p for perm in args.permissions for p in perm]
-
-    if args.meta_data is None:
-        args.meta_data = []
-
-    if args.services is None:
-        args.services = []
+    if args.permissions and isinstance(args.permissions[0], list):
+        args.permissions = [p for perm in args.permissions for p in perm]
 
     if args.try_system_python_compile:
         # Hardcoding python2.7 is okay for now, as python3 skips the
@@ -741,10 +780,8 @@ tools directory of the Android SDK.
                         if x.strip() and not x.strip().startswith('#')]
         WHITELIST_PATTERNS += patterns
 
-    if args.private is None and (
-            get_bootstrap_name() != "sdl2" or
-            args.launcher is None
-            ):
+    if args.private is None and \
+            get_bootstrap_name() == 'sdl2' and args.launcher is None:
         print('Need --private directory or ' +
               '--launcher (SDL2 bootstrap only)' +
               'to have something to launch inside the .apk!')

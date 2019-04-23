@@ -3,6 +3,7 @@ from __future__ import print_function
 from os.path import (join, realpath, dirname, expanduser, exists,
                      split, isdir)
 from os import environ
+import copy
 import os
 import glob
 import sys
@@ -10,14 +11,16 @@ import re
 import sh
 import subprocess
 
-from pythonforandroid.util import (ensure_dir, current_directory, BuildInterruptingException)
+from pythonforandroid.util import (
+    current_directory, ensure_dir, get_virtualenv_executable,
+    BuildInterruptingException
+)
 from pythonforandroid.logger import (info, warning, info_notify, info_main, shprint)
 from pythonforandroid.archs import ArchARM, ArchARMv7_a, ArchAarch_64, Archx86, Archx86_64
-from pythonforandroid.recipe import Recipe
-
-DEFAULT_ANDROID_API = 15
-
-DEFAULT_NDK_API = 21
+from pythonforandroid.recipe import CythonRecipe, Recipe
+from pythonforandroid.recommendations import (
+    check_ndk_version, check_target_api, check_ndk_api,
+    RECOMMENDED_NDK_API, RECOMMENDED_TARGET_API)
 
 
 class Context(object):
@@ -140,19 +143,6 @@ class Context(object):
         self._ndk_api = value
 
     @property
-    def ndk_ver(self):
-        '''The version of the NDK being used for compilation.'''
-        if self._ndk_ver is None:
-            raise ValueError('Tried to access ndk_ver but it has not '
-                             'been set - this should not happen, something '
-                             'went wrong!')
-        return self._ndk_ver
-
-    @ndk_ver.setter
-    def ndk_ver(self, value):
-        self._ndk_ver = value
-
-    @property
     def sdk_dir(self):
         '''The path to the Android SDK.'''
         if self._sdk_dir is None:
@@ -182,7 +172,6 @@ class Context(object):
                                   user_sdk_dir,
                                   user_ndk_dir,
                                   user_android_api,
-                                  user_ndk_ver,
                                   user_ndk_api):
         '''Checks that build dependencies exist and sets internal variables
         for the Android SDK etc.
@@ -236,17 +225,12 @@ class Context(object):
             info('Found Android API target in $ANDROIDAPI: {}'.format(android_api))
         else:
             info('Android API target was not set manually, using '
-                 'the default of {}'.format(DEFAULT_ANDROID_API))
-            android_api = DEFAULT_ANDROID_API
+                 'the default of {}'.format(RECOMMENDED_TARGET_API))
+            android_api = RECOMMENDED_TARGET_API
         android_api = int(android_api)
         self.android_api = android_api
 
-        if self.android_api >= 21 and self.archs[0].arch == 'armeabi':
-            raise BuildInterruptingException(
-                'Asked to build for armeabi architecture with API '
-                '{}, but API 21 or greater does not support armeabi'.format(
-                    self.android_api),
-                instructions='You probably want to build with --arch=armeabi-v7a instead')
+        check_target_api(android_api, self.archs[0].arch)
 
         if exists(join(sdk_dir, 'tools', 'bin', 'avdmanager')):
             avdmanager = sh.Command(join(sdk_dir, 'tools', 'bin', 'avdmanager'))
@@ -305,47 +289,7 @@ class Context(object):
             raise BuildInterruptingException('Android NDK dir was not specified')
         self.ndk_dir = realpath(ndk_dir)
 
-        # Find the NDK version, and check it against what the NDK dir
-        # seems to report
-        ndk_ver = None
-        if user_ndk_ver:
-            ndk_ver = user_ndk_ver
-            if ndk_dir is not None:
-                info('Got NDK version from from user argument: {}'.format(ndk_ver))
-        if ndk_ver is None:
-            ndk_ver = environ.get('ANDROIDNDKVER', None)
-            if ndk_ver is not None:
-                info('Got NDK version from $ANDROIDNDKVER: {}'.format(ndk_ver))
-
-        self.ndk = 'google'
-
-        try:
-            with open(join(ndk_dir, 'RELEASE.TXT')) as fileh:
-                reported_ndk_ver = fileh.read().split(' ')[0].strip()
-        except IOError:
-            pass
-        else:
-            if reported_ndk_ver.startswith('crystax-ndk-'):
-                reported_ndk_ver = reported_ndk_ver[12:]
-                self.ndk = 'crystax'
-            if ndk_ver is None:
-                ndk_ver = reported_ndk_ver
-                info(('Got Android NDK version from the NDK dir: {}').format(ndk_ver))
-            else:
-                if ndk_ver != reported_ndk_ver:
-                    warning('NDK version was set as {}, but checking '
-                            'the NDK dir claims it is {}.'.format(
-                                ndk_ver, reported_ndk_ver))
-                    warning('The build will try to continue, but it may '
-                            'fail and you should check '
-                            'that your setting is correct.')
-                    warning('If the NDK dir result is correct, you don\'t '
-                            'need to manually set the NDK ver.')
-        if ndk_ver is None:
-            warning('Android NDK version could not be found. This probably'
-                    'won\'t cause any problems, but if necessary you can'
-                    'set it with `--ndk-version=...`.')
-        self.ndk_ver = ndk_ver
+        check_ndk_version(ndk_dir)
 
         ndk_api = None
         if user_ndk_api:
@@ -355,29 +299,16 @@ class Context(object):
             ndk_api = environ.get('NDKAPI', None)
             info('Found Android API target in $NDKAPI')
         else:
-            ndk_api = min(self.android_api, DEFAULT_NDK_API)
+            ndk_api = min(self.android_api, RECOMMENDED_NDK_API)
             warning('NDK API target was not set manually, using '
                     'the default of {} = min(android-api={}, default ndk-api={})'.format(
-                        ndk_api, self.android_api, DEFAULT_NDK_API))
+                        ndk_api, self.android_api, RECOMMENDED_NDK_API))
         ndk_api = int(ndk_api)
         self.ndk_api = ndk_api
 
-        if self.ndk_api > self.android_api:
-            raise BuildInterruptingException(
-                'Target NDK API is {}, higher than the target Android API {}.'.format(
-                    self.ndk_api, self.android_api),
-                instructions=('The NDK API is a minimum supported API number and must be lower '
-                              'than the target Android API'))
+        check_ndk_api(ndk_api, self.android_api)
 
-        info('Using {} NDK {}'.format(self.ndk.capitalize(), self.ndk_ver))
-
-        virtualenv = None
-        if virtualenv is None:
-            virtualenv = sh.which('virtualenv2')
-        if virtualenv is None:
-            virtualenv = sh.which('virtualenv-2.7')
-        if virtualenv is None:
-            virtualenv = sh.which('virtualenv')
+        virtualenv = get_virtualenv_executable()
         if virtualenv is None:
             raise IOError('Couldn\'t find a virtualenv executable, '
                           'you must install this to use p4a.')
@@ -482,7 +413,6 @@ class Context(object):
         self._ndk_dir = None
         self._android_api = None
         self._ndk_api = None
-        self._ndk_ver = None
         self.ndk = None
 
         self.toolchain_prefix = None
@@ -536,12 +466,9 @@ class Context(object):
         '''Returns the location of site-packages in the python-install build
         dir.
         '''
-        if self.python_recipe.name == 'python2':
+        if self.python_recipe.name == 'python2legacy':
             return join(self.get_python_install_dir(),
                         'lib', 'python2.7', 'site-packages')
-
-        # Only python2 is a special case, other python recipes use the
-        # python install dir
         return self.get_python_install_dir()
 
     def get_libs_dir(self, arch):
@@ -579,7 +506,7 @@ class Context(object):
         # Try to look up recipe by name:
         try:
             recipe = Recipe.get_recipe(name, self)
-        except IOError:
+        except ValueError:
             pass
         else:
             name = getattr(recipe, 'site_packages_name', None) or name
@@ -598,7 +525,6 @@ class Context(object):
 
 def build_recipes(build_order, python_modules, ctx):
     # Put recipes in correct build order
-    bs = ctx.bootstrap
     info_notify("Recipe build order is {}".format(build_order))
     if python_modules:
         python_modules = sorted(set(python_modules))
@@ -672,8 +598,12 @@ def run_pymodules_install(ctx, modules):
     venv = sh.Command(ctx.virtualenv)
     with current_directory(join(ctx.build_dir)):
         shprint(venv,
-                '--python=python{}'.format(ctx.python_recipe.major_minor_version_string),
-                'venv')
+                '--python=python{}'.format(
+                    ctx.python_recipe.major_minor_version_string.
+                    partition(".")[0]
+                    ),
+                'venv'
+               )
 
         info('Creating a requirements.txt file for the Python modules')
         with open('requirements.txt', 'w') as fileh:
@@ -685,17 +615,54 @@ def run_pymodules_install(ctx, modules):
                     line = '{}\n'.format(module)
                 fileh.write(line)
 
-        info('Installing Python modules with pip')
-        info('If this fails with a message about /bin/false, this '
-             'probably means the package cannot be installed with '
-             'pip as it needs a compilation recipe.')
-
-        # This bash method is what old-p4a used
-        # It works but should be replaced with something better
+        # Prepare base environment and upgrade pip:
+        base_env = copy.copy(os.environ)
+        base_env["PYTHONPATH"] = ctx.get_site_packages_dir()
+        info('Upgrade pip to latest version')
         shprint(sh.bash, '-c', (
-            "env CC=/bin/false CXX=/bin/false "
-            "PYTHONPATH={0} venv/bin/pip install --target '{0}' --no-deps -r requirements.txt"
-        ).format(ctx.get_site_packages_dir()))
+            "source venv/bin/activate && pip install -U pip"
+        ), _env=copy.copy(base_env))
+
+        # Install Cython in case modules need it to build:
+        info('Install Cython in case one of the modules needs it to build')
+        shprint(sh.bash, '-c', (
+            "venv/bin/pip install Cython"
+        ), _env=copy.copy(base_env))
+
+        # Get environment variables for build (with CC/compiler set):
+        standard_recipe = CythonRecipe()
+        standard_recipe.ctx = ctx
+        # (note: following line enables explicit -lpython... linker options)
+        standard_recipe.call_hostpython_via_targetpython = False
+        recipe_env = standard_recipe.get_recipe_env(ctx.archs[0])
+        env = copy.copy(base_env)
+        env.update(recipe_env)
+
+        info('Installing Python modules with pip')
+        info('IF THIS FAILS, THE MODULES MAY NEED A RECIPE. '
+             'A reason for this is often modules compiling '
+             'native code that is unaware of Android cross-compilation '
+             'and does not work without additional '
+             'changes / workarounds.')
+
+        # Make sure our build package dir is available, and the virtualenv
+        # site packages come FIRST (so the proper pip version is used):
+        env["PYTHONPATH"] += ":" + ctx.get_site_packages_dir()
+        env["PYTHONPATH"] = os.path.abspath(join(
+            ctx.build_dir, "venv", "lib",
+            "python" + ctx.python_recipe.major_minor_version_string,
+            "site-packages")) + ":" + env["PYTHONPATH"]
+
+        # Do actual install:
+        shprint(sh.bash, '-c', (
+            "venv/bin/pip " +
+            "install -v --target '{0}' --no-deps -r requirements.txt"
+        ).format(ctx.get_site_packages_dir().replace("'", "'\"'\"'")),
+                _env=copy.copy(env))
+
+        # Strip object files after potential Cython or native code builds:
+        standard_recipe.strip_object_files(ctx.archs[0], env,
+                                           build_dir=ctx.build_dir)
 
 
 def biglink(ctx, arch):

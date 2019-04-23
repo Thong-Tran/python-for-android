@@ -1,6 +1,7 @@
 from os.path import (join, dirname, isdir, normpath, splitext, basename)
 from os import listdir, walk, sep
 import sh
+import shlex
 import glob
 import importlib
 import os
@@ -9,7 +10,7 @@ import shutil
 from pythonforandroid.logger import (warning, shprint, info, logger,
                                      debug)
 from pythonforandroid.util import (current_directory, ensure_dir,
-                                   temp_directory, which)
+                                   temp_directory)
 from pythonforandroid.recipe import Recipe
 
 
@@ -48,7 +49,11 @@ class Bootstrap(object):
     dist_name = None
     distribution = None
 
-    recipe_depends = ['sdl2']
+    # All bootstraps should include Python in some way:
+    recipe_depends = [
+        ("python2", "python2legacy", "python3", "python3crystax"),
+        'android',
+    ]
 
     can_be_chosen_automatically = True
     '''Determines whether the bootstrap can be chosen as one that
@@ -166,7 +171,7 @@ class Bootstrap(object):
                 for recipe in recipes:
                     try:
                         recipe = Recipe.get_recipe(recipe, ctx)
-                    except IOError:
+                    except ValueError:
                         conflicts = []
                     else:
                         conflicts = recipe.conflicts
@@ -174,7 +179,7 @@ class Bootstrap(object):
                             for conflict in conflicts]):
                         ok = False
                         break
-                if ok:
+                if ok and bs not in acceptable_bootstraps:
                     acceptable_bootstraps.append(bs)
         info('Found {} acceptable bootstraps: {}'.format(
             len(acceptable_bootstraps),
@@ -263,22 +268,22 @@ class Bootstrap(object):
             info('Python was loaded from CrystaX, skipping strip')
             return
         env = arch.get_env()
-        strip = which('arm-linux-androideabi-strip', env['PATH'])
-        if strip is None:
-            warning('Can\'t find strip in PATH...')
-            return
-        strip = sh.Command(strip)
+        tokens = shlex.split(env['STRIP'])
+        strip = sh.Command(tokens[0])
+        if len(tokens) > 1:
+            strip = strip.bake(tokens[1:])
 
-        if self.ctx.python_recipe.name == 'python2':
-            filens = shprint(sh.find, join(self.dist_dir, 'private'),
-                             join(self.dist_dir, 'libs'),
-                             '-iname', '*.so', _env=env).stdout.decode('utf-8')
-        else:
-            filens = shprint(sh.find, join(self.dist_dir, '_python_bundle', '_python_bundle', 'modules'),
-                             join(self.dist_dir, 'libs'),
-                             '-iname', '*.so', _env=env).stdout.decode('utf-8')
+        libs_dir = join(self.dist_dir, '_python_bundle',
+                        '_python_bundle', 'modules')
+        if self.ctx.python_recipe.name == 'python2legacy':
+            libs_dir = join(self.dist_dir, 'private')
+        filens = shprint(sh.find, libs_dir, join(self.dist_dir, 'libs'),
+                         '-iname', '*.so', _env=env).stdout.decode('utf-8')
+
         logger.info('Stripping libraries in private dir')
         for filen in filens.split('\n'):
+            if not filen:
+                continue  # skip the last ''
             try:
                 strip(filen, _env=env)
             except sh.ErrorReturnCode_1:

@@ -3,11 +3,10 @@ from pythonforandroid.recipe import PythonRecipe
 
 class OmemoBackendSignalRecipe(PythonRecipe):
     name = 'omemo-backend-signal'
-    version = '0.2.2'
+    version = '0.2.3'
     url = 'https://pypi.python.org/packages/source/o/omemo-backend-signal/omemo-backend-signal-{version}.tar.gz'
     site_packages_name = 'omemo-backend-signal'
     depends = [
-        ('python2', 'python3crystax'),
         'setuptools',
         'protobuf_cpp',
         'x3dh',
@@ -16,7 +15,6 @@ class OmemoBackendSignalRecipe(PythonRecipe):
         'cryptography',
         'omemo',
     ]
-    patches = ['wireformat.patch']
     call_hostpython_via_targetpython = False
 
 

@@ -4,10 +4,17 @@ import sh
 
 
 class Psycopg2Recipe(PythonRecipe):
+    """
+    Requires `libpq-dev` system dependency e.g. for `pg_config` binary.
+    If you get `nl_langinfo` symbol runtime error, make sure you're running on
+    `ANDROID_API` (`ndk-api`) >= 26, see:
+    https://github.com/kivy/python-for-android/issues/1711#issuecomment-465747557
+    """
     version = 'latest'
     url = 'http://initd.org/psycopg/tarballs/psycopg2-{version}.tar.gz'
-    depends = [('python2', 'python3crystax'), 'libpq']
+    depends = ['libpq']
     site_packages_name = 'psycopg2'
+    call_hostpython_via_targetpython = False
 
     def prebuild_arch(self, arch):
         libdir = self.ctx.get_libs_dir(arch.arch)
@@ -37,7 +44,7 @@ class Psycopg2Recipe(PythonRecipe):
                     _env=env)
             shprint(hostpython, 'setup.py', 'install', '-O2',
                     '--root={}'.format(self.ctx.get_python_install_dir()),
-                    '--install-lib=lib/python2.7/site-packages', _env=env)
+                    '--install-lib=.', _env=env)
 
 
 recipe = Psycopg2Recipe()

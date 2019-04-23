@@ -17,7 +17,9 @@
 #include "bootstrap_name.h"
 #ifndef BOOTSTRAP_USES_NO_SDL_HEADERS
 #include "SDL.h"
+#ifndef BOOTSTRAP_NAME_PYGAME
 #include "SDL_opengles2.h"
+#endif
 #endif
 #ifdef BOOTSTRAP_NAME_PYGAME
 #include "jniwrapperstuff.h"
@@ -65,7 +67,7 @@ int dir_exists(char *filename) {
 
 int file_exists(const char *filename) {
   FILE *file;
-  if (file = fopen(filename, "r")) {
+  if ((file = fopen(filename, "r"))) {
     fclose(file);
     return 1;
   }
@@ -82,29 +84,79 @@ int main(int argc, char *argv[]) {
   int ret = 0;
   FILE *fd;
 
-  setenv("P4A_BOOTSTRAP", bootstrap_name, 1);  // env var to identify p4a to applications
-
   LOGP("Initializing Python for Android");
+
+  // Set a couple of built-in environment vars:
+  setenv("P4A_BOOTSTRAP", bootstrap_name, 1);  // env var to identify p4a to applications
   env_argument = getenv("ANDROID_ARGUMENT");
   setenv("ANDROID_APP_PATH", env_argument, 1);
   env_entrypoint = getenv("ANDROID_ENTRYPOINT");
   env_logname = getenv("PYTHON_NAME");
-
   if (!getenv("ANDROID_UNPACK")) {
     /* ANDROID_UNPACK currently isn't set in services */
     setenv("ANDROID_UNPACK", env_argument, 1);
   }
-  
   if (env_logname == NULL) {
     env_logname = "python";
     setenv("PYTHON_NAME", "python", 1);
+  }
+
+  // Set additional file-provided environment vars:
+  LOGP("Setting additional env vars from p4a_env_vars.txt");
+  char env_file_path[256];
+  snprintf(env_file_path, sizeof(env_file_path),
+           "%s/p4a_env_vars.txt", getenv("ANDROID_UNPACK"));
+  FILE *env_file_fd = fopen(env_file_path, "r");
+  if (env_file_fd) {
+    char* line = NULL;
+    size_t len = 0;
+    while (getline(&line, &len, env_file_fd) != -1) {
+      if (strlen(line) > 0) {
+        char *eqsubstr = strstr(line, "=");
+        if (eqsubstr) {
+          size_t eq_pos = eqsubstr - line;
+
+          // Extract name:
+          char env_name[256];
+          strncpy(env_name, line, sizeof(env_name));
+          env_name[eq_pos] = '\0';
+
+          // Extract value (with line break removed:
+          char env_value[256];
+          strncpy(env_value, (char*)(line + eq_pos + 1), sizeof(env_value));
+          if (strlen(env_value) > 0 &&
+              env_value[strlen(env_value)-1] == '\n') {
+            env_value[strlen(env_value)-1] = '\0';
+            if (strlen(env_value) > 0 &&
+                env_value[strlen(env_value)-1] == '\r') {
+              // Also remove windows line breaks (\r\n)
+              env_value[strlen(env_value)-1] = '\0';
+            } 
+          }
+
+          // Set value:
+          setenv(env_name, env_value, 1);
+        }
+      }
+    }
+    fclose(env_file_fd);
+  } else {
+    LOGP("Warning: no p4a_env_vars.txt found / failed to open!");
   }
 
   LOGP("Changing directory to the one provided by ANDROID_ARGUMENT");
   LOGP(env_argument);
   chdir(env_argument);
 
+#if PY_MAJOR_VERSION < 3
+  Py_NoSiteFlag=1;
+#endif
+
+#if PY_MAJOR_VERSION < 3
+  Py_SetProgramName("android_python");
+#else
   Py_SetProgramName(L"android_python");
+#endif
 
 #if PY_MAJOR_VERSION >= 3
   /* our logging module for android
@@ -144,10 +196,6 @@ int main(int argc, char *argv[]) {
     #if PY_MAJOR_VERSION >= 3
         wchar_t *wchar_paths = Py_DecodeLocale(paths, NULL);
         Py_SetPath(wchar_paths);
-    #else
-        char *wchar_paths = paths;
-        LOGP("Can't Py_SetPath in python2, so crystax python2 doesn't work yet");
-        exit(1);
     #endif
 
         LOGP("set wchar paths...");
@@ -161,6 +209,12 @@ int main(int argc, char *argv[]) {
   Py_Initialize();
 
 #if PY_MAJOR_VERSION < 3
+  // Can't Py_SetPath in python2 but we can set PySys_SetPath, which must
+  // be applied after Py_Initialize rather than before like Py_SetPath
+  #if PY_MICRO_VERSION >= 15
+    // Only for python native-build
+    PySys_SetPath(paths);
+  #endif
   PySys_SetArgv(argc, argv);
 #endif
 
@@ -183,7 +237,9 @@ int main(int argc, char *argv[]) {
    */
   PyRun_SimpleString("import sys, posix\n");
   if (dir_exists("lib")) {
-    /* If we built our own python, set up the paths correctly */
+    /* If we built our own python, set up the paths correctly.
+     * This is only the case if we are using the python2legacy recipe
+     */
     LOGP("Setting up python from ANDROID_APP_PATH");
     PyRun_SimpleString("private = posix.environ['ANDROID_APP_PATH']\n"
                        "argument = posix.environ['ANDROID_ARGUMENT']\n"
@@ -253,6 +309,11 @@ int main(int argc, char *argv[]) {
   /* Get the entrypoint, search the .pyo then .py
    */
   char *dot = strrchr(env_entrypoint, '.');
+#if PY_MAJOR_VERSION > 2
+  char *ext = ".pyc";
+#else
+  char *ext = ".pyo";
+#endif
   if (dot <= 0) {
     LOGP("Invalid entrypoint, abort.");
     return -1;
@@ -261,14 +322,14 @@ int main(int argc, char *argv[]) {
       LOGP("Entrypoint path is too long, try increasing ENTRYPOINT_MAXLEN.");
       return -1;
   }
-  if (!strcmp(dot, ".pyo")) {
+  if (!strcmp(dot, ext)) {
     if (!file_exists(env_entrypoint)) {
       /* fallback on .py */
       strcpy(entrypoint, env_entrypoint);
       entrypoint[strlen(env_entrypoint) - 1] = '\0';
       LOGP(entrypoint);
       if (!file_exists(entrypoint)) {
-        LOGP("Entrypoint not found (.pyo, fallback on .py), abort");
+        LOGP("Entrypoint not found (.pyc/.pyo, fallback on .py), abort");
         return -1;
       }
     } else {
@@ -278,7 +339,11 @@ int main(int argc, char *argv[]) {
     /* if .py is passed, check the pyo version first */
     strcpy(entrypoint, env_entrypoint);
     entrypoint[strlen(env_entrypoint) + 1] = '\0';
+#if PY_MAJOR_VERSION > 2
+    entrypoint[strlen(env_entrypoint)] = 'c';
+#else
     entrypoint[strlen(env_entrypoint)] = 'o';
+#endif
     if (!file_exists(entrypoint)) {
       /* fallback on pure python version */
       if (!file_exists(env_entrypoint)) {
@@ -288,7 +353,7 @@ int main(int argc, char *argv[]) {
       strcpy(entrypoint, env_entrypoint);
     }
   } else {
-    LOGP("Entrypoint have an invalid extension (must be .py or .pyo), abort.");
+    LOGP("Entrypoint have an invalid extension (must be .py or .pyc/.pyo), abort.");
     return -1;
   }
   // LOGP("Entrypoint is:");
@@ -303,6 +368,7 @@ int main(int argc, char *argv[]) {
   /* run python !
    */
   ret = PyRun_SimpleFile(fd, entrypoint);
+  fclose(fd);
 
   if (PyErr_Occurred() != NULL) {
     ret = 1;
@@ -313,12 +379,36 @@ int main(int argc, char *argv[]) {
       PyErr_Clear();
   }
 
-  /* close everything
-   */
-  Py_Finalize();
-  fclose(fd);
-
   LOGP("Python for android ended.");
+
+  /* Shut down: since regular shutdown causes issues sometimes
+     (seems to be an incomplete shutdown breaking next launch)
+     we'll use sys.exit(ret) to shutdown, since that one works.
+
+     Reference discussion:
+
+     https://github.com/kivy/kivy/pull/6107#issue-246120816
+   */
+  char terminatecmd[256];
+  snprintf(
+    terminatecmd, sizeof(terminatecmd),
+    "import sys; sys.exit(%d)\n", ret
+  );
+  PyRun_SimpleString(terminatecmd);
+
+  /* This should never actually be reached, but we'll leave the clean-up
+   * here just to be safe.
+   */
+#if PY_MAJOR_VERSION < 3
+  Py_Finalize();
+  LOGP("Unexpectedly reached Py_FinalizeEx(), but was successful.");
+#else
+  if (Py_FinalizeEx() != 0)  // properly check success on Python 3
+    LOGP("Unexpectedly reached Py_FinalizeEx(), and got error!");
+  else
+    LOGP("Unexpectedly reached Py_FinalizeEx(), but was successful.");
+#endif
+
   return ret;
 }
 
@@ -327,10 +417,8 @@ JNIEXPORT void JNICALL Java_org_kivy_android_PythonService_nativeStart(
     jobject thiz,
     jstring j_android_private,
     jstring j_android_argument,
-#if (!defined(BOOTSTRAP_NAME_PYGAME))
     jstring j_service_entrypoint,
     jstring j_python_name,
-#endif
     jstring j_python_home,
     jstring j_python_path,
     jstring j_arg) {
@@ -339,14 +427,10 @@ JNIEXPORT void JNICALL Java_org_kivy_android_PythonService_nativeStart(
       (*env)->GetStringUTFChars(env, j_android_private, &iscopy);
   const char *android_argument =
       (*env)->GetStringUTFChars(env, j_android_argument, &iscopy);
-#if (!defined(BOOTSTRAP_NAME_PYGAME))
   const char *service_entrypoint =
       (*env)->GetStringUTFChars(env, j_service_entrypoint, &iscopy);
   const char *python_name =
       (*env)->GetStringUTFChars(env, j_python_name, &iscopy);
-#else
-  const char python_name[] = "python2";
-#endif
   const char *python_home =
       (*env)->GetStringUTFChars(env, j_python_home, &iscopy);
   const char *python_path =
@@ -356,10 +440,7 @@ JNIEXPORT void JNICALL Java_org_kivy_android_PythonService_nativeStart(
   setenv("ANDROID_PRIVATE", android_private, 1);
   setenv("ANDROID_ARGUMENT", android_argument, 1);
   setenv("ANDROID_APP_PATH", android_argument, 1);
-
-#if (!defined(BOOTSTRAP_NAME_PYGAME))
   setenv("ANDROID_ENTRYPOINT", service_entrypoint, 1);
-#endif
   setenv("PYTHONOPTIMIZE", "2", 1);
   setenv("PYTHON_NAME", python_name, 1);
   setenv("PYTHONHOME", python_home, 1);
@@ -374,22 +455,23 @@ JNIEXPORT void JNICALL Java_org_kivy_android_PythonService_nativeStart(
   main(1, argv);
 }
 
-#ifdef BOOTSTRAP_NAME_WEBVIEW
-// Webview uses some more functions:
+#if defined(BOOTSTRAP_NAME_WEBVIEW) || defined(BOOTSTRAP_NAME_SERVICEONLY)
+// Webview and service_only uses some more functions:
 
-void Java_org_kivy_android_PythonActivity_nativeSetEnv(
-                                    JNIEnv* env, jclass jcls,
-                                    jstring j_name, jstring j_value)
-/* JNIEXPORT void JNICALL Java_org_libsdl_app_SDLActivity_nativeSetEnv( */
-/*                                     JNIEnv* env, jclass jcls, */
-/*                                     jstring j_name, jstring j_value) */
+void Java_org_kivy_android_PythonActivity_nativeSetenv(
+                                    JNIEnv* env, jclass cls,
+                                    jstring name, jstring value)
+//JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(nativeSetenv)(
+//                                    JNIEnv* env, jclass cls,
+//                                    jstring name, jstring value)
 {
-    jboolean iscopy;
-    const char *name = (*env)->GetStringUTFChars(env, j_name, &iscopy);
-    const char *value = (*env)->GetStringUTFChars(env, j_value, &iscopy);
-    setenv(name, value, 1);
-    (*env)->ReleaseStringUTFChars(env, j_name, name);
-    (*env)->ReleaseStringUTFChars(env, j_value, value);
+    const char *utfname = (*env)->GetStringUTFChars(env, name, NULL);
+    const char *utfvalue = (*env)->GetStringUTFChars(env, value, NULL);
+
+    setenv(utfname, utfvalue, 1);
+
+    (*env)->ReleaseStringUTFChars(env, name, utfname);
+    (*env)->ReleaseStringUTFChars(env, value, utfvalue);
 }
 
 

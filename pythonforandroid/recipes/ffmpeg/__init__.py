@@ -5,7 +5,8 @@ import sh
 
 class FFMpegRecipe(Recipe):
     version = '4.1.1'
-    url = 'http://ffmpeg.org/releases/ffmpeg-{version}.tar.bz2'
+    # Moved to github.com instead of ffmpeg.org to improve download speed
+    url = 'https://github.com/FFmpeg/FFmpeg/archive/{version}.zip'
     depends = ['sdl2']  # Need this to build correct recipe order
     opts_depends = ['openssl', 'ffpyplayer_codecs']
     patches = ['patches/configure.patch']
@@ -87,7 +88,7 @@ class FFMpegRecipe(Recipe):
 
             # other flags:
             flags += [
-                '--enable-filter=aresample,resample,crop,adelay,volume',
+                '--enable-filter=aresample,resample,crop,adelay,volume,scale',
                 '--enable-protocol=file,http',
                 '--enable-small',
                 '--enable-hwaccels',
