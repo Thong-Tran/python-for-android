@@ -1,6 +1,70 @@
 --- a/src/main/java/org/libsdl/app/SDLActivity.java
 +++ b/src/main/java/org/libsdl/app/SDLActivity.java
-@@ -196,6 +196,15 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
+@@ -11,6 +11,7 @@ import android.app.*;
+ import android.content.*;
+ import android.content.res.Configuration;
+ import android.text.InputType;
++import android.util.TypedValue;
+ import android.view.*;
+ import android.view.inputmethod.BaseInputConnection;
+ import android.view.inputmethod.EditorInfo;
+@@ -34,7 +35,10 @@ import android.content.pm.ApplicationInfo;
+ /**
+     SDL Activity
+ */
+-public class SDLActivity extends Activity implements View.OnSystemUiVisibilityChangeListener {
++
++
++public class SDLActivity extends Activity implements View.OnSystemUiVisibilityChangeListener,
++        OnKeyboardVisibilityListener{
+     private static final String TAG = "SDL";
+ 
+     public static boolean mIsResumedCalled, mIsSurfaceReady, mHasFocus;
+@@ -188,6 +192,43 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
+         mCurrentNativeState = NativeState.INIT;
+     }
+ 
++    private boolean isKeyboardVisible = true;
++
++    /**
++     * Listen keyboard hide/show events
++     * @param visible
++     */
++    @Override
++    public void onVisibilityChanged(boolean visible) {
++        isKeyboardVisible = visible;
++    }
++
++    private void setKeyboardVisibilityListener(final OnKeyboardVisibilityListener onKeyboardVisibilityListener) {
++        final View parentView = ((ViewGroup) findViewById(android.R.id.content)).getChildAt(0);
++        parentView.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
++
++            private boolean alreadyOpen;
++            private final int defaultKeyboardHeightDP = 100;
++            private final int EstimatedKeyboardDP = defaultKeyboardHeightDP + (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ? 48 : 0);
++            private final Rect rect = new Rect();
++
++            @Override
++            public void onGlobalLayout() {
++                int estimatedKeyboardHeight = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, EstimatedKeyboardDP, parentView.getResources().getDisplayMetrics());
++                parentView.getWindowVisibleDisplayFrame(rect);
++                int heightDiff = parentView.getRootView().getHeight() - (rect.bottom - rect.top);
++                boolean isShown = heightDiff >= estimatedKeyboardHeight;
++
++                if (isShown == alreadyOpen) {
++                    Log.i("Keyboard state", "Ignoring global layout change...");
++                    return;
++                }
++                alreadyOpen = isShown;
++                onKeyboardVisibilityListener.onVisibilityChanged(isShown);
++            }
++        });
++    }
++
+     // Setup
+     @Override
+     protected void onCreate(Bundle savedInstanceState) {
+@@ -196,6 +237,15 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
          Log.v(TAG, "onCreate()");
          super.onCreate(savedInstanceState);
  
@@ -16,7 +80,47 @@
          // Load shared libraries
          String errorMsgBrokenLib = "";
          try {
-@@ -639,7 +648,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
+@@ -277,6 +327,8 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
+                 SDLActivity.onNativeDropFile(filename);
+             }
+         }
++
++        setKeyboardVisibilityListener(this);
+     }
+ 
+     // Events
+@@ -356,8 +408,21 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
+         if (hasFocus) {
+            mNextNativeState = NativeState.RESUMED;
+            SDLActivity.getMotionListener().reclaimRelativeMouseModeIfNeeded();
++
++           // Re-new input text
++            if (mTextEdit != null && isKeyboardVisible) {
++                ((DummyEdit) mTextEdit).ic.setComposingText("", 0);
++                // Please consider params of bellow method
++                showTextInput(0,0,10,0);
++            }
+         } else {
+            mNextNativeState = NativeState.PAUSED;
++//            Defocus mTextEdit
++//            if (mTextEdit != null) {
++//                mTextEdit.setVisibility(View.GONE);
++//                mTextEdit.destroyDrawingCache();
++//                mTextEdit = null;
++//            }
+         }
+ 
+         SDLActivity.handleNativeState();
+@@ -584,7 +649,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
+                                         View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                                         View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                                         View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.INVISIBLE;
+-                            window.getDecorView().setSystemUiVisibility(flags);        
++                            window.getDecorView().setSystemUiVisibility(flags);
+                             window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                             window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                             SDLActivity.mFullscreenModeActive = true;
+@@ -639,7 +704,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      Handler commandHandler = new SDLCommandHandler();
  
      // Send a message from the SDLMain thread
@@ -25,7 +129,7 @@
          Message msg = commandHandler.obtainMessage();
          msg.arg1 = command;
          msg.obj = data;
-@@ -1051,6 +1061,21 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
+@@ -1051,6 +1116,21 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
          return Arrays.copyOf(filtered, used);
      }
  
@@ -47,7 +151,7 @@
      // APK expansion files support
  
      /** com.android.vending.expansion.zipfile.ZipResourceFile object or null. */
-@@ -1341,14 +1366,13 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
+@@ -1341,14 +1421,13 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      };
  
      public void onSystemUiVisibilityChange(int visibility) {
@@ -64,7 +168,7 @@
          }
      }    
  
-@@ -1475,6 +1499,7 @@ class SDLMain implements Runnable {
+@@ -1475,6 +1554,7 @@ class SDLMain implements Runnable {
          String[] arguments = SDLActivity.mSingleton.getArguments();
  
          Log.v("SDL", "Running main function " + function + " from library " + library);
@@ -72,3 +176,13 @@
          SDLActivity.nativeRunMain(library, function, arguments);
  
          Log.v("SDL", "Finished main function");
+@@ -2002,7 +2082,8 @@ class DummyEdit extends View implements View.OnKeyListener {
+     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+         ic = new SDLInputConnection(this, true);
+ 
+-        outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
++        // Hotfix: can not switch to JP keyboard (GBoard)
++        outAttrs.inputType = InputType.TYPE_CLASS_TEXT;// | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
+         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                 | EditorInfo.IME_FLAG_NO_FULLSCREEN /* API 11 */;
+ 
