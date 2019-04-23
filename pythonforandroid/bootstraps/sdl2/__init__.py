@@ -8,14 +8,14 @@ import sh
 class SDL2GradleBootstrap(Bootstrap):
     name = 'sdl2'
 
-    recipe_depends = ['sdl2']
+    recipe_depends = list(
+        set(Bootstrap.recipe_depends).union({'sdl2'})
+    )
 
     def run_distribute(self):
         info_main("# Creating Android project ({})".format(self.name))
 
         arch = self.ctx.archs[0]
-        python_install_dir = self.ctx.get_python_install_dir()
-        from_crystax = self.ctx.python_recipe.from_crystax
 
         if len(self.ctx.archs) > 1:
             raise ValueError("SDL2/gradle support only one arch")

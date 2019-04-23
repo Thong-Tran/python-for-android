@@ -4,7 +4,10 @@ build our python3 and python2 recipes and his corresponding hostpython recipes.
 '''
 
 from os.path import dirname, exists, join
+from multiprocessing import cpu_count
+from shutil import copy2
 from os import environ
+import subprocess
 import glob
 import sh
 
@@ -12,7 +15,7 @@ from pythonforandroid.recipe import Recipe, TargetPythonRecipe
 from pythonforandroid.logger import logger, info, shprint
 from pythonforandroid.util import (
     current_directory, ensure_dir, walk_valid_filens,
-    BuildInterruptingException)
+    BuildInterruptingException, build_platform)
 
 
 class GuestPythonRecipe(TargetPythonRecipe):
@@ -70,7 +73,7 @@ class GuestPythonRecipe(TargetPythonRecipe):
     '''The directories that we want to omit for our python bundle'''
 
     stdlib_filen_blacklist = [
-        '*.pyc',
+        '*.py',
         '*.exe',
         '*.whl',
     ]
@@ -83,12 +86,22 @@ class GuestPythonRecipe(TargetPythonRecipe):
     '''The directories from site packages dir that we don't want to be included
     in our python bundle.'''
 
-    site_packages_filen_blacklist = []
+    site_packages_filen_blacklist = [
+        '*.py'
+    ]
     '''The file extensions from site packages dir that we don't want to be
     included in our python bundle.'''
 
     opt_depends = ['sqlite3', 'libffi', 'openssl']
     '''The optional libraries which we would like to get our python linked'''
+
+    compiled_extension = '.pyc'
+    '''the default extension for compiled python files.
+
+    .. note:: the default extension for compiled python files has been .pyo for
+        python 2.x-3.4 but as of Python 3.5, the .pyo filename extension is no
+        longer used and has been removed in favour of extension .pyc
+    '''
 
     def __init__(self, *args, **kwargs):
         self._ctx = None
@@ -106,12 +119,12 @@ class GuestPythonRecipe(TargetPythonRecipe):
             toolchain_prefix=self.ctx.toolchain_prefix,
             toolchain_version=self.ctx.toolchain_version)
         toolchain = join(self.ctx.ndk_dir, 'toolchains',
-                         toolchain, 'prebuilt', 'linux-x86_64')
+                         toolchain, 'prebuilt', build_platform)
 
         env['CC'] = (
             '{clang} -target {target} -gcc-toolchain {toolchain}').format(
                 clang=join(self.ctx.ndk_dir, 'toolchains', 'llvm', 'prebuilt',
-                           'linux-x86_64', 'bin', 'clang'),
+                           build_platform, 'bin', 'clang'),
                 target=arch.target,
                 toolchain=toolchain)
         env['AR'] = join(toolchain, 'bin', android_host) + '-ar'
@@ -157,6 +170,14 @@ class GuestPythonRecipe(TargetPythonRecipe):
 
         env['SYSROOT'] = sysroot
 
+        if sh.which('lld') is not None:
+            # Note: The -L. is to fix a bug in python 3.7.
+            # https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=234409
+            env["LDFLAGS"] += ' -L. -fuse-ld=lld'
+        else:
+            logger.warning('lld not found, linking without it. ' +
+                           'Consider installing lld if linker errors occur.')
+
         return env
 
     def set_libs_flags(self, env, arch):
@@ -177,9 +198,13 @@ class GuestPythonRecipe(TargetPythonRecipe):
         if 'libffi' in self.ctx.recipe_build_order:
             info('Activating flags for libffi')
             recipe = Recipe.get_recipe('libffi', self.ctx)
+            # In order to force the correct linkage for our libffi library, we
+            # set the following variable to point where is our libffi.pc file,
+            # because the python build system uses pkg-config to configure it.
+            env['PKG_CONFIG_PATH'] = recipe.get_build_dir(arch.arch)
             add_flags(' -I' + ' -I'.join(recipe.get_include_dirs(arch)),
-                      ' -L' + join(recipe.get_build_dir(arch.arch),
-                                   recipe.get_host(arch), '.libs'), ' -lffi')
+                      ' -L' + join(recipe.get_build_dir(arch.arch), '.libs'),
+                      ' -lffi')
 
         if 'openssl' in self.ctx.recipe_build_order:
             info('Activating flags for openssl')
@@ -234,7 +259,7 @@ class GuestPythonRecipe(TargetPythonRecipe):
                 py_version = self.major_minor_version_string
                 if self.major_minor_version_string[0] == '3':
                     py_version += 'm'
-                shprint(sh.make, 'all',
+                shprint(sh.make, 'all', '-j', str(cpu_count()),
                         'INSTSONAME=libpython{version}.so'.format(
                             version=py_version), _env=env)
 
@@ -248,34 +273,63 @@ class GuestPythonRecipe(TargetPythonRecipe):
     def link_root(self, arch_name):
         return join(self.get_build_dir(arch_name), 'android-build')
 
+    def compile_python_files(self, dir):
+        '''
+        Compile the python files (recursively) for the python files inside
+        a given folder.
+
+        .. note:: python2 compiles the files into extension .pyo, but in
+            python3, and as of Python 3.5, the .pyo filename extension is no
+            longer used...uses .pyc (https://www.python.org/dev/peps/pep-0488)
+        '''
+        args = [self.ctx.hostpython]
+        if self.ctx.python_recipe.name == 'python3':
+            args += ['-OO', '-m', 'compileall', '-b', '-f', dir]
+        else:
+            args += ['-OO', '-m', 'compileall', '-f', dir]
+        subprocess.call(args)
+
     def create_python_bundle(self, dirn, arch):
         """
         Create a packaged python bundle in the target directory, by
         copying all the modules and standard library to the right
         place.
         """
-        # Bundle compiled python modules to a folder
-        modules_dir = join(dirn, 'modules')
-        ensure_dir(modules_dir)
         # Todo: find a better way to find the build libs folder
         modules_build_dir = join(
             self.get_build_dir(arch.arch),
             'android-build',
             'build',
-            'lib.linux{}-arm-{}'.format(
+            'lib.linux{}-{}-{}'.format(
                 '2' if self.version[0] == '2' else '',
+                arch.command_prefix.split('-')[0],
                 self.major_minor_version_string
             ))
+
+        # Compile to *.pyc/*.pyo the python modules
+        self.compile_python_files(modules_build_dir)
+        # Compile to *.pyc/*.pyo the standard python library
+        self.compile_python_files(join(self.get_build_dir(arch.arch), 'Lib'))
+        # Compile to *.pyc/*.pyo the other python packages (site-packages)
+        self.compile_python_files(self.ctx.get_python_install_dir())
+
+        # Bundle compiled python modules to a folder
+        modules_dir = join(dirn, 'modules')
+        c_ext = self.compiled_extension
+        ensure_dir(modules_dir)
         module_filens = (glob.glob(join(modules_build_dir, '*.so')) +
-                         glob.glob(join(modules_build_dir, '*.py')))
+                         glob.glob(join(modules_build_dir, '*' + c_ext)))
+        info("Copy {} files into the bundle".format(len(module_filens)))
         for filen in module_filens:
-            shprint(sh.cp, filen, modules_dir)
+            info(" - copy {}".format(filen))
+            copy2(filen, modules_dir)
 
         # zip up the standard library
         stdlib_zip = join(dirn, 'stdlib.zip')
         with current_directory(join(self.get_build_dir(arch.arch), 'Lib')):
-            stdlib_filens = walk_valid_filens(
-                '.', self.stdlib_dir_blacklist, self.stdlib_filen_blacklist)
+            stdlib_filens = list(walk_valid_filens(
+                '.', self.stdlib_dir_blacklist, self.stdlib_filen_blacklist))
+            info("Zip {} files into the bundle".format(len(stdlib_filens)))
             shprint(sh.zip, stdlib_zip, *stdlib_filens)
 
         # copy the site-packages into place
@@ -286,9 +340,11 @@ class GuestPythonRecipe(TargetPythonRecipe):
             filens = list(walk_valid_filens(
                 '.', self.site_packages_dir_blacklist,
                 self.site_packages_filen_blacklist))
+            info("Copy {} files into the site-packages".format(len(filens)))
             for filen in filens:
+                info(" - copy {}".format(filen))
                 ensure_dir(join(dirn, 'site-packages', dirname(filen)))
-                sh.cp(filen, join(dirn, 'site-packages', filen))
+                copy2(filen, join(dirn, 'site-packages', filen))
 
         # copy the python .so files into place
         python_build_dir = join(self.get_build_dir(arch.arch),
@@ -297,7 +353,7 @@ class GuestPythonRecipe(TargetPythonRecipe):
         if self.major_minor_version_string[0] == '3':
             python_lib_name += 'm'
         shprint(sh.cp, join(python_build_dir, python_lib_name + '.so'),
-                'libs/{}'.format(arch.arch))
+                join(self.ctx.dist_dir, self.ctx.dist_name, 'libs', arch.arch))
 
         info('Renaming .so files to reflect cross-compile')
         self.reduce_object_file_names(join(dirn, 'site-packages'))
@@ -373,7 +429,7 @@ class HostPythonRecipe(Recipe):
                 shprint(sh.cp, join('Modules', 'Setup.dist'),
                         join(build_dir, 'Modules', 'Setup'))
 
-                result = shprint(sh.make, '-C', build_dir)
+                shprint(sh.make, '-j', str(cpu_count()), '-C', build_dir)
         else:
             info('Skipping {name} ({version}) build, as it has already '
                  'been completed'.format(name=self.name, version=self.version))

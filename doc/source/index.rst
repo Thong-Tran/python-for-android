@@ -29,16 +29,15 @@ Contents
    quickstart
    buildoptions
    commands
+   apis
+   launcher
    distutils
    recipes
    bootstraps
    services
-   apis
    troubleshooting
-   launcher
    docker
    contribute
-   old_toolchain/index.rst
 
 
 Indices and tables

@@ -1,11 +1,10 @@
-from os.path import (exists, join, dirname, split)
-from os import environ, uname
-from glob import glob
-import sys
 from distutils.spawn import find_executable
+from os import environ
+from os.path import (exists, join, dirname, split)
+from glob import glob
 
 from pythonforandroid.recipe import Recipe
-from pythonforandroid.util import BuildInterruptingException
+from pythonforandroid.util import BuildInterruptingException, build_platform
 
 
 class Arch(object):
@@ -19,6 +18,12 @@ class Arch(object):
     def __init__(self, ctx):
         super(Arch, self).__init__()
         self.ctx = ctx
+
+        # Allows injecting additional linker paths used by any recipe.
+        # This can also be modified by recipes (like the librt recipe)
+        # to make sure that some sort of global resource is available &
+        # linked for all others.
+        self.extra_global_link_paths = []
 
     def __str__(self):
         return self.arch
@@ -51,11 +56,18 @@ class Arch(object):
             toolchain = '{android_host}-{toolchain_version}'.format(
                 android_host=self.ctx.toolchain_prefix,
                 toolchain_version=self.ctx.toolchain_version)
-            toolchain = join(self.ctx.ndk_dir, 'toolchains', toolchain, 'prebuilt', 'linux-x86_64')
+            toolchain = join(self.ctx.ndk_dir, 'toolchains', toolchain,
+                             'prebuilt', build_platform)
             cflags.append('-gcc-toolchain {}'.format(toolchain))
 
         env['CFLAGS'] = ' '.join(cflags)
-        env['LDFLAGS'] = ' '
+
+        # Link the extra global link paths first before anything else
+        # (such that overriding system libraries with them is possible)
+        env['LDFLAGS'] = ' ' + " ".join([
+            "-L'" + l.replace("'", "'\"'\"'") + "'"  # no shlex.quote in py2
+            for l in self.extra_global_link_paths
+        ]) + ' '
 
         sysroot = join(self.ctx._ndk_dir, 'sysroot')
         if exists(sysroot):
@@ -74,7 +86,7 @@ class Arch(object):
                                          self.ctx.python_recipe.version[0:3])
                                     )
 
-        env['LDFLAGS'] += '--sysroot {} '.format(self.ctx.ndk_platform)
+        env['LDFLAGS'] += '--sysroot={} '.format(self.ctx.ndk_platform)
 
         env["CXXFLAGS"] = env["CFLAGS"]
 
@@ -82,10 +94,6 @@ class Arch(object):
 
         if self.ctx.ndk == 'crystax':
             env['LDFLAGS'] += ' -L{}/sources/crystax/libs/{} -lcrystax'.format(self.ctx.ndk_dir, self.arch)
-
-        py_platform = sys.platform
-        if py_platform in ['linux2', 'linux3']:
-            py_platform = 'linux'
 
         toolchain_prefix = self.ctx.toolchain_prefix
         toolchain_version = self.ctx.toolchain_version
@@ -106,7 +114,7 @@ class Arch(object):
             llvm_dirname = split(
                 glob(join(self.ctx.ndk_dir, 'toolchains', 'llvm*'))[-1])[-1]
             clang_path = join(self.ctx.ndk_dir, 'toolchains', llvm_dirname,
-                              'prebuilt', 'linux-x86_64', 'bin')
+                              'prebuilt', build_platform, 'bin')
             environ['PATH'] = '{clang_path}:{path}'.format(
                 clang_path=clang_path, path=environ['PATH'])
             exe = join(clang_path, 'clang')
@@ -122,7 +130,7 @@ class Arch(object):
                 'Couldn\'t find executable for CC. This indicates a '
                 'problem locating the {} executable in the Android '
                 'NDK, not that you don\'t have a normal compiler '
-                'installed. Exiting.')
+                'installed. Exiting.'.format(exe))
 
         if with_flags_in_cc:
             env['CC'] = '{ccache}{exe} {cflags}'.format(
@@ -159,8 +167,8 @@ class Arch(object):
             'host' + self.ctx.python_recipe.name, self.ctx)
         env['BUILDLIB_PATH'] = join(
             hostpython_recipe.get_build_dir(self.arch),
-            'build', 'lib.linux-{}-{}'.format(
-                uname()[-1], self.ctx.python_recipe.major_minor_version_string)
+            'build', 'lib.{}-{}'.format(
+                build_platform, self.ctx.python_recipe.major_minor_version_string)
         )
 
         env['PATH'] = environ['PATH']

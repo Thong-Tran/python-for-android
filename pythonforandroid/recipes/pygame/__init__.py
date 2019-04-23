@@ -12,7 +12,7 @@ class PygameRecipe(Recipe):
     version = '1.9.1'
     url = 'http://pygame.org/ftp/pygame-{version}release.tar.gz'
 
-    depends = ['python2', 'sdl']
+    depends = ['python2legacy', 'sdl']
     conflicts = ['sdl2']
 
     patches = ['patches/fix-surface-access.patch',
@@ -68,7 +68,6 @@ class PygameRecipe(Recipe):
             shprint(sh.find, build_lib[0], '-name', '*.o', '-exec',
                     env['STRIP'], '{}', ';')
 
-        python_install_path = join(self.ctx.build_dir, 'python-install')
         warning('Should remove pygame tests etc. here, but skipping for now')
 
 

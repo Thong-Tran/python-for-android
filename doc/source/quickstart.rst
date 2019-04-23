@@ -55,7 +55,7 @@ p4a has several dependencies that must be installed:
 - ant
 - python2
 - cython (can be installed via pip)
-- a Java JDK (e.g. openjdk-7)
+- a Java JDK (e.g. openjdk-8)
 - zlib (including 32 bit)
 - libncurses (including 32 bit)
 - unzip
@@ -63,13 +63,14 @@ p4a has several dependencies that must be installed:
 - ccache (optional)
 - autoconf (for ffpyplayer_codecs recipe)
 - libtool (for ffpyplayer_codecs recipe)
+- cmake (required for some native code recipes like jpeg's recipe)
 
 On recent versions of Ubuntu and its derivatives you may be able to
 install most of these with::
 
     sudo dpkg --add-architecture i386
     sudo apt-get update
-    sudo apt-get install -y build-essential ccache git zlib1g-dev python2.7 python2.7-dev libncurses5:i386 libstdc++6:i386 zlib1g:i386 openjdk-7-jdk unzip ant ccache autoconf libtool
+    sudo apt-get install -y build-essential ccache git zlib1g-dev python2.7 python2.7-dev libncurses5:i386 libstdc++6:i386 zlib1g:i386 openjdk-8-jdk unzip ant ccache autoconf libtool
 
 On Arch Linux (64 bit) you should be able to run the following to
 install most of the dependencies (note: this list may not be
@@ -114,8 +115,10 @@ the latest usable NDK version is r10e, which can be downloaded here:
     release with the legacy version of python is version
     `0.6.0 <https://github.com/kivy/python-for-android/archive/0.6.0.zip>`_.
 
-First, install a platform to target (you can also replace ``27`` with
-a different platform number, this will be used again later)::
+First, install an API platform to target. You can replace ``27`` with
+a different platform number, but keep in mind **other API versions
+are less well-tested**, and older devices are still supported
+(down to the specified *minimum* API/NDK API level):
 
   $SDK_DIR/tools/bin/sdkmanager "platforms;android-27"
 
@@ -146,18 +149,34 @@ You have the possibility to configure on any command the PATH to the SDK, NDK an
 Usage
 -----
 
-Build a Kivy application
-~~~~~~~~~~~~~~~~~~~~~~~~
+Build a Kivy or SDL2 application
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-To build your application, you need to have a name, version, a package
-identifier, and explicitly write the bootstrap you want to use, as
-well as the requirements::
+To build your application, you need to specify name, version, a package
+identifier, the bootstrap you want to use (`sdl2` for kivy or sdl2 apps)
+and the requirements::
 
-    p4a apk --private $HOME/code/myapp --package=org.example.myapp --name "My application" --version 0.1 --bootstrap=sdl2 --requirements=python2,kivy
+    p4a apk --private $HOME/code/myapp --package=org.example.myapp --name "My application" --version 0.1 --bootstrap=sdl2 --requirements=python3,kivy
 
-This will first build a distribution that contains `python2` and `kivy`, and using a SDL2 bootstrap. Python2 is here explicitely written as kivy can work with python2 or python3.
+**Note on `--requirements`: you must add all
+libraries/dependencies your app needs to run.**
+Example: `--requirements=python3,kivy,vispy`. For an SDL2 app,
+`kivy` is not needed, but you need to add any wrappers you might
+use (e.g. `pysdl2`).
 
-You can also use ``--bootstrap=pygame``, but this bootstrap is deprecated for use with Kivy and SDL2 is preferred.
+This `p4a apk ...` command builds a distribution with `python3`,
+`kivy`, and everything else you specified in the requirements.
+It will be packaged using a SDL2 bootstrap, and produce
+an `.apk` file.
+
+*Compatibility notes:*
+
+- While python2 is still supported by python-for-android,
+  it will possibly no longer receive patches by the python creators
+  themselves in 2020. Migration to Python 3 is recommended!
+
+- You can also use ``--bootstrap=pygame``, but this bootstrap
+  is deprecated and not well-tested.
 
 Build a WebView application
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -168,25 +187,13 @@ well as the requirements::
 
     p4a apk --private $HOME/code/myapp --package=org.example.myapp --name "My WebView Application" --version 0.1 --bootstrap=webview --requirements=flask --port=5000
 
+**Please note as with kivy/SDL2, you need to specify all your
+additional requirements/depenencies.**
+
 You can also replace flask with another web framework.
 
 Replace ``--port=5000`` with the port on which your app will serve a
 website. The default for Flask is 5000.
-
-Build an SDL2 based application
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This includes e.g. `PySDL2
-<https://pysdl2.readthedocs.io/en/latest/>`__.
-
-To build your application, you need to have a name, version, a package
-identifier, and explicitly write the sdl2 bootstrap, as well as the
-requirements::
-
-    p4a apk --private $HOME/code/myapp --package=org.example.myapp --name "My SDL2 application" --version 0.1 --bootstrap=sdl2 --requirements=your_requirements
-
-Add your required modules in place of ``your_requirements``,
-e.g. ``--requirements=pysdl2`` or ``--requirements=vispy``.
 
 Other options
 ~~~~~~~~~~~~~
@@ -195,7 +202,7 @@ You can pass other command line arguments to control app behaviours
 such as orientation, wakelock and app permissions. See
 :ref:`bootstrap_build_options`.
 
-    
+
 
 Rebuild everything
 ~~~~~~~~~~~~~~~~~~
@@ -203,11 +210,11 @@ Rebuild everything
 If anything goes wrong and you want to clean the downloads and builds to retry everything, run::
 
     p4a clean_all
-    
+
 If you just want to clean the builds to avoid redownloading dependencies, run::
 
     p4a clean_builds && p4a clean_dists
-    
+
 Getting help
 ~~~~~~~~~~~~
 
@@ -266,7 +273,7 @@ You can list the available distributions::
 And clean all of them::
 
     p4a clean_dists
-    
+
 Configuration file
 ~~~~~~~~~~~~~~~~~~
 
@@ -279,6 +286,17 @@ include such as::
     --android_api 27
     --requirements kivy,openssl
 
+Overriding recipes sources
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You can override the source of any recipe using the
+``$P4A_recipename_DIR`` environment variable. For instance, to test
+your own Kivy branch you might set::
+
+    export P4A_kivy_DIR=/home/username/kivy
+
+The specified directory will be copied into python-for-android instead
+of downloading from the normal url specified in the recipe.
 
 Going further
 ~~~~~~~~~~~~~

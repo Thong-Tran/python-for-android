@@ -16,8 +16,6 @@ BROKEN_RECIPES_PYTHON2 = set([
     # https://github.com/kivy/python-for-android/issues/550
     'audiostream',
     'brokenrecipe',
-    # https://github.com/kivy/python-for-android/issues/1409
-    'enaml',
     'evdev',
     # distutils.errors.DistutilsError
     # Could not find suitable distribution for Requirement.parse('cython')
@@ -25,18 +23,14 @@ BROKEN_RECIPES_PYTHON2 = set([
     'flask',
     'groestlcoin_hash',
     'hostpython3crystax',
-    # https://github.com/kivy/python-for-android/issues/1398
-    'ifaddrs',
     # https://github.com/kivy/python-for-android/issues/1354
-    'kivent_core', 'kivent_cymunk', 'kivent_particles', 'kivent_polygen',
     'kiwisolver',
-    # https://github.com/kivy/python-for-android/issues/1399
-    'libglob',
     'libmysqlclient',
     'libsecp256k1',
     'libtribler',
     'ndghttpsclient',
     'm2crypto',
+    # ImportError: No module named setuptools
     'netifaces',
     'Pillow',
     # depends on cffi that still seems to have compilation issues
@@ -45,9 +39,12 @@ BROKEN_RECIPES_PYTHON2 = set([
     'x3dh',
     'pynacl',
     'doubleratchet',
+    # The opencv recipe fails to pass travis tests due to the long processing
+    # when building it and the lack of console output, so, it's only broken
+    # for travis, see: https://github.com/kivy/python-for-android/pull/1661
+    'opencv',
     'omemo',
-    'cryptography',
-    # https://github.com/kivy/python-for-android/issues/1405
+    # requires `libpq-dev` system dependency e.g. for `pg_config` binary
     'psycopg2',
     'pygame',
     # most likely some setup in the Docker container, because it works in host
@@ -65,31 +62,23 @@ BROKEN_RECIPES_PYTHON2 = set([
     'zeroconf',
     'zope',
 ])
-BROKEN_RECIPES_PYTHON3_CRYSTAX = set([
+BROKEN_RECIPES_PYTHON3 = set([
     'brokenrecipe',
     # enum34 is not compatible with Python 3.6 standard library
     # https://stackoverflow.com/a/45716067/185510
     'enum34',
-    # https://github.com/kivy/python-for-android/issues/1398
-    'ifaddrs',
-    # https://github.com/kivy/python-for-android/issues/1399
-    'libglob',
-    # cannot find -lcrystax
-    'cffi', 'pycryptodome', 'pymuk', 'secp256k1',
-    # https://github.com/kivy/python-for-android/issues/1404
-    'cryptography',
-    # https://github.com/kivy/python-for-android/issues/1294
-    'ffmpeg', 'ffpyplayer',
-    # https://github.com/kivy/python-for-android/pull/1307 ?
-    'gevent',
+    # build_dir = glob.glob('build/lib.*')[0]
+    # IndexError: list index out of range
+    'secp256k1',
+    'ffpyplayer',
     'icu',
     # https://github.com/kivy/python-for-android/issues/1354
-    'kivent_core', 'kivent_cymunk', 'kivent_particles', 'kivent_polygen',
-    # https://github.com/kivy/python-for-android/issues/1405
-    'libpq', 'psycopg2',
-    'netifaces',
-    # https://github.com/kivy/python-for-android/issues/1315 ?
+    # The opencv recipe fails to pass travis tests due to the long processing
+    # when building it and the lack of console output, so, it's only broken
+    # for travis, see: https://github.com/kivy/python-for-android/pull/1661
     'opencv',
+    # requires `libpq-dev` system dependency e.g. for `pg_config` binary
+    'psycopg2',
     'protobuf_cpp',
     # most likely some setup in the Docker container, because it works in host
     'pyjnius', 'pyopenal',
@@ -99,13 +88,9 @@ BROKEN_RECIPES_PYTHON3_CRYSTAX = set([
     'sympy',
     'vlc',
 ])
-# to be created via https://github.com/kivy/python-for-android/issues/1514
-BROKEN_RECIPES_PYTHON3 = set([
-])
 
 BROKEN_RECIPES = {
     TargetPython.python2: BROKEN_RECIPES_PYTHON2,
-    TargetPython.python3crystax: BROKEN_RECIPES_PYTHON3_CRYSTAX,
     TargetPython.python3: BROKEN_RECIPES_PYTHON3,
 }
 # recipes that were already built will be skipped
