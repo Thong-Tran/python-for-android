@@ -387,6 +387,9 @@ class Context(object):
         self.toolchain_prefix = toolchain_prefix
         self.toolchain_version = toolchain_version
         # Modify the path so that sh finds modules appropriately
+        environ['PATH'] = '{ndk_dir}:{sdk_dir}/tools:{path}'.format(
+            sdk_dir=self.sdk_dir, ndk_dir=self.ndk_dir,
+            path=environ.get('PATH'))
         for arch in self.archs:
             environ['PATH_{}'.format(arch.arch)] = (
                 '{ndk_dir}/toolchains/{toolchain_prefix}-{toolchain_version}/'
