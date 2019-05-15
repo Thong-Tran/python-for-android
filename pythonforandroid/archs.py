@@ -110,22 +110,24 @@ class Arch(object):
             env['NDK_CCACHE'] = self.ctx.ccache
             env.update({k: v for k, v in environ.items() if k.startswith('CCACHE_')})
 
+        env_path = environ['PATH_{}'.format(self.arch)]
+
         if clang:
             llvm_dirname = split(
                 glob(join(self.ctx.ndk_dir, 'toolchains', 'llvm*'))[-1])[-1]
             clang_path = join(self.ctx.ndk_dir, 'toolchains', llvm_dirname,
                               'prebuilt', build_platform, 'bin')
-            environ['PATH'] = '{clang_path}:{path}'.format(
-                clang_path=clang_path, path=environ['PATH'])
+            env_path = '{clang_path}:{path}'.format(
+                clang_path=clang_path, path=env_path)
             exe = join(clang_path, 'clang')
             execxx = join(clang_path, 'clang++')
         else:
             exe = '{command_prefix}-gcc'.format(command_prefix=command_prefix)
             execxx = '{command_prefix}-g++'.format(command_prefix=command_prefix)
 
-        cc = find_executable(exe, path=environ['PATH'])
+        cc = find_executable(exe, path=env_path)
         if cc is None:
-            print('Searching path are: {!r}'.format(environ['PATH']))
+            print('Searching path are: {!r}'.format(env_path))
             raise BuildInterruptingException(
                 'Couldn\'t find executable for CC. This indicates a '
                 'problem locating the {} executable in the Android '
@@ -171,7 +173,7 @@ class Arch(object):
                 build_platform, self.ctx.python_recipe.major_minor_version_string)
         )
 
-        env['PATH'] = environ['PATH']
+        env['PATH'] = env_path
 
         env['ARCH'] = self.arch
         env['NDK_API'] = 'android-{}'.format(str(self.ctx.ndk_api))
