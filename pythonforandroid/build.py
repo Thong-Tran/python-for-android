@@ -391,16 +391,15 @@ class Context(object):
             sdk_dir=self.sdk_dir, ndk_dir=self.ndk_dir,
             path=environ.get('PATH'))
         for arch in self.archs:
-            environ['PATH_{}'.format(arch.arch)] = (
-                '{ndk_dir}/toolchains/{toolchain_prefix}-{toolchain_version}/'
+            environ['PATH'] += (
+                ':{ndk_dir}/toolchains/{toolchain_prefix}-{toolchain_version}/'
                 'prebuilt/{py_platform}-x86/bin/:{ndk_dir}/toolchains/'
                 '{toolchain_prefix}-{toolchain_version}/prebuilt/'
-                '{py_platform}-x86_64/bin/:{ndk_dir}:{sdk_dir}/'
-                'tools:{path}').format(
+                '{py_platform}-x86_64/bin/').format(
                     sdk_dir=self.sdk_dir, ndk_dir=self.ndk_dir,
                     toolchain_prefix=arch.toolchain_prefix,
                     toolchain_version=toolchain_version,
-                    py_platform=py_platform, path=environ.get('PATH'))
+                    py_platform=py_platform)
 
         for executable in ("pkg-config", "autoconf", "automake", "libtoolize",
                            "tar", "bzip2", "unzip", "make", "gcc", "g++"):

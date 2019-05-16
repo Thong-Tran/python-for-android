@@ -110,7 +110,7 @@ class Arch(object):
             env['NDK_CCACHE'] = self.ctx.ccache
             env.update({k: v for k, v in environ.items() if k.startswith('CCACHE_')})
 
-        env_path = environ['PATH_{}'.format(self.arch)]
+        env_path = environ['PATH']
 
         if clang:
             llvm_dirname = split(
