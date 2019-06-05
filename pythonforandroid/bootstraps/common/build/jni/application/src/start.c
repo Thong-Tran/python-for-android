@@ -15,14 +15,10 @@
 #include <errno.h>
 
 #include "bootstrap_name.h"
+
 #ifndef BOOTSTRAP_USES_NO_SDL_HEADERS
 #include "SDL.h"
-#ifndef BOOTSTRAP_NAME_PYGAME
 #include "SDL_opengles2.h"
-#endif
-#endif
-#ifdef BOOTSTRAP_NAME_PYGAME
-#include "jniwrapperstuff.h"
 #endif
 #include "android/log.h"
 
@@ -236,20 +232,6 @@ int main(int argc, char *argv[]) {
    * replace sys.path with our path
    */
   PyRun_SimpleString("import sys, posix\n");
-  if (dir_exists("lib")) {
-    /* If we built our own python, set up the paths correctly.
-     * This is only the case if we are using the python2legacy recipe
-     */
-    LOGP("Setting up python from ANDROID_APP_PATH");
-    PyRun_SimpleString("private = posix.environ['ANDROID_APP_PATH']\n"
-                       "argument = posix.environ['ANDROID_ARGUMENT']\n"
-                       "sys.path[:] = [ \n"
-                       "    private + '/lib/python27.zip', \n"
-                       "    private + '/lib/python2.7/', \n"
-                       "    private + '/lib/python2.7/lib-dynload/', \n"
-                       "    private + '/lib/python2.7/site-packages/', \n"
-                       "    argument ]\n");
-  }
 
   char add_site_packages_dir[256];
   if (dir_exists(crystax_python_dir)) {
